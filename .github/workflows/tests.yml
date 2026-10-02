@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/langgraph-graphrag-mvp
+      - feature/neo4j-aura-adapter
   pull_request:
 
 permissions:
@@ -23,3 +24,46 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Test
         run: pytest -q
+
+  aura-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NEO4J_AURA_BLOB: ${{ secrets.NEO4J_AURA }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Connect to Aura and run GraphRAG smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NEO4J_AURA_BLOB:-}" ]; then
+            echo "NEO4J_AURA secret is not available to this workflow."
+            exit 1
+          fi
+
+          secret_file="$RUNNER_TEMP/neo4j_aura.env"
+          printf '%s\n' "$NEO4J_AURA_BLOB" > "$secret_file"
+          chmod 600 "$secret_file"
+
+          set -a
+          source "$secret_file"
+          set +a
+
+          : "${NEO4J_URI:?NEO4J_URI missing from NEO4J_AURA secret}"
+          : "${NEO4J_USERNAME:?NEO4J_USERNAME missing from NEO4J_AURA secret}"
+          : "${NEO4J_PASSWORD:?NEO4J_PASSWORD missing from NEO4J_AURA secret}"
+          : "${NEO4J_DATABASE:?NEO4J_DATABASE missing from NEO4J_AURA secret}"
+
+          unset NEO4J_AURA_BLOB
+          rm -f "$secret_file"
+
+          python scripts/bootstrap_aura.py
+          python scripts/aura_smoke_test.py
+          pytest -q tests/test_aura_integration.py
