@@ -5,6 +5,7 @@ on:
     branches:
       - feature/langgraph-graphrag-mvp
       - feature/neo4j-aura-adapter
+      - feature/vector-graphrag-retrieval
   pull_request:
 
 permissions:
@@ -65,5 +66,7 @@ jobs:
           rm -f "$secret_file"
 
           python scripts/bootstrap_aura.py
+          python scripts/setup_vector_index.py
           python scripts/aura_smoke_test.py
+          python scripts/vector_graphrag_smoke.py
           pytest -q tests/test_aura_integration.py
