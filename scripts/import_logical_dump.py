@@ -56,6 +56,14 @@ def import_graph(path: Path, *, clear: bool = True) -> dict[str, int]:
         for rel in payload["relationships"]:
             grouped_rels[rel["type"]].append(rel)
 
+        driver.execute_query(
+            """
+            CREATE INDEX source_element_id IF NOT EXISTS
+            FOR (n) ON (n.__source_element_id)
+            """,
+            database_=database,
+        )
+
         for rel_type, rows in grouped_rels.items():
             rel_identifier = quote_identifier(rel_type)
             driver.execute_query(
