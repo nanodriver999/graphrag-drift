@@ -129,12 +129,22 @@ jobs:
         with:
           repository: ${{ env.DUMP_REPOSITORY }}
           path: dump-repo
+          token: ${{ secrets.DUMP_REPO_TOKEN }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
       - name: Install
         run: python -m pip install -e ".[dev]"
+      - name: Unpack versioned dump
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dump-repo/data/aura_dump.zip
+          mkdir -p "$RUNNER_TEMP/aura-dump"
+          unzip -q dump-repo/data/aura_dump.zip -d "$RUNNER_TEMP/aura-dump"
+          test -f "$RUNNER_TEMP/aura-dump/aura_dump.json"
+
       - name: Start plain Docker Neo4j
         shell: bash
         run: |
@@ -155,9 +165,9 @@ jobs:
           docker logs graphrag-dump-target
           exit 1
       - name: Import versioned dump into Docker Neo4j
-        run: python scripts/import_logical_dump.py dump-repo/data/aura_dump.json
+        run: python scripts/import_logical_dump.py "$RUNNER_TEMP/aura-dump/aura_dump.json"
       - name: Verify imported graph
-        run: python scripts/verify_logical_dump.py dump-repo/data/aura_dump.json
+        run: python scripts/verify_logical_dump.py "$RUNNER_TEMP/aura-dump/aura_dump.json"
       - name: Stop Docker Neo4j
         if: always()
         shell: bash
