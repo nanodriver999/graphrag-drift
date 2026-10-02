@@ -1,11 +1,11 @@
+from .core import GraphRAGEngine
 from .models import CommunityReport, SearchHit
 from .retrieval import InMemoryRetriever, Retriever
-from .workflow import build_workflow
 
 __all__ = [
     "CommunityReport",
+    "GraphRAGEngine",
     "SearchHit",
     "InMemoryRetriever",
     "Retriever",
-    "build_workflow",
 ]
