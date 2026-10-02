@@ -74,8 +74,11 @@ jobs:
 
 
   aura-dump-to-docker:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     env:
       NEO4J_AURA_BLOB: ${{ secrets.NEO4J_AURA }}
       LOCAL_NEO4J_URI: bolt://localhost:17687
@@ -108,7 +111,22 @@ jobs:
           unset NEO4J_AURA_BLOB
           rm -f "$secret_file"
 
-          python scripts/export_aura_logical_dump.py "$RUNNER_TEMP/aura-graph.json"
+          mkdir -p data
+          python scripts/export_aura_logical_dump.py data/aura_dump.json
+
+      - name: Commit versioned Aura dump
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data/aura_dump.json && git ls-files --error-unmatch data/aura_dump.json >/dev/null 2>&1; then
+            echo "Aura dump unchanged."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/aura_dump.json
+            git commit -m "Update Aura logical dump [skip ci]"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
       - name: Start plain Docker Neo4j
         shell: bash
         run: |
@@ -129,12 +147,12 @@ jobs:
           docker logs graphrag-dump-target
           exit 1
       - name: Import dump into Docker Neo4j
-        run: python scripts/import_logical_dump.py "$RUNNER_TEMP/aura-graph.json"
+        run: python scripts/import_logical_dump.py data/aura_dump.json
       - name: Verify imported graph
-        run: python scripts/verify_logical_dump.py "$RUNNER_TEMP/aura-graph.json"
+        run: python scripts/verify_logical_dump.py data/aura_dump.json
       - name: Remove transient dump
         if: always()
         shell: bash
         run: |
-          rm -f "$RUNNER_TEMP/aura-graph.json"
+          rm -f data/aura_dump.json
           docker rm -f graphrag-dump-target >/dev/null 2>&1 || true
