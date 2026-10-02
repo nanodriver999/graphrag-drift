@@ -72,9 +72,9 @@ class Neo4jRetriever:
     def close(self) -> None:
         self.driver.close()
 
-    def _run(self, query: str, **params: Any) -> list[dict[str, Any]]:
+    def _run(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
         records, _, _ = self.driver.execute_query(
-            query,
+            cypher,
             parameters_=params,
             database_=self.database,
         )
