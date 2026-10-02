@@ -69,5 +69,4 @@ jobs:
           python scripts/setup_vector_index.py
           python scripts/aura_smoke_test.py
           python scripts/vector_graphrag_smoke.py
-          python scripts/run_leiden.py
           pytest -q tests/test_aura_integration.py
