@@ -4,7 +4,8 @@ from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .llm import DeterministicReasoner, Reasoner
+from .core import GraphRAGEngine
+from .llm import Reasoner
 from .models import SearchHit
 from .retrieval import Retriever
 
@@ -25,67 +26,28 @@ class GraphRAGState(TypedDict, total=False):
 
 
 def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
-    reasoner = reasoner or DeterministicReasoner()
+    engine = GraphRAGEngine(retriever, reasoner)
 
     def route(state: GraphRAGState) -> str:
         return state["mode"]
 
     def local_search(state: GraphRAGState) -> GraphRAGState:
-        hits = retriever.local_search(
-            state["query"],
-            top_k=state.get("top_k", 5),
-        )
-        return {
-            "evidence": hits,
-            "answer": reasoner.answer_local(state["query"], hits),
-        }
+        return engine.local(state["query"], top_k=state.get("top_k", 5))
 
     def global_map_reduce(state: GraphRAGState) -> GraphRAGState:
-        reports = retriever.community_reports(
-            state["query"],
-            top_k=state.get("top_k", 5),
-        )
-        partials = [reasoner.map_community(state["query"], report) for report in reports]
-        return {
-            "partials": partials,
-            "answer": reasoner.reduce_global(state["query"], partials),
-        }
+        return engine.global_search(state["query"], top_k=state.get("top_k", 5))
 
     def drift_primer(state: GraphRAGState) -> GraphRAGState:
-        hits = retriever.local_search(
-            state["query"],
-            top_k=state.get("top_k", 5),
-        )
-        return {
-            "depth": 0,
-            "evidence": hits,
-            "followups": reasoner.generate_followups(
-                state["query"],
-                hits,
-                depth=0,
-            ),
-        }
+        return engine.drift_primer(state["query"], top_k=state.get("top_k", 5))
 
     def drift_expand(state: GraphRAGState) -> GraphRAGState:
-        depth = state.get("depth", 0) + 1
-        evidence = list(state.get("evidence", []))
-        for followup in state.get("followups", []):
-            evidence.extend(
-                retriever.local_search(
-                    followup,
-                    top_k=state.get("top_k", 5),
-                )
-            )
-
-        return {
-            "depth": depth,
-            "evidence": evidence,
-            "followups": reasoner.generate_followups(
-                state["query"],
-                evidence,
-                depth=depth,
-            ),
-        }
+        return engine.drift_expand(
+            state["query"],
+            evidence=state.get("evidence", []),
+            followups=state.get("followups", []),
+            depth=state.get("depth", 0),
+            top_k=state.get("top_k", 5),
+        )
 
     def drift_should_continue(state: GraphRAGState) -> str:
         if state.get("depth", 0) >= state.get("max_depth", 2):
@@ -96,7 +58,7 @@ def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
 
     def drift_reduce(state: GraphRAGState) -> GraphRAGState:
         return {
-            "answer": reasoner.reduce_drift(
+            "answer": engine.drift_reduce(
                 state["query"],
                 state.get("evidence", []),
             )
