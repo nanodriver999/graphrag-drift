@@ -1,4 +1,4 @@
-from scripts.import_logical_dump import quote_identifier
+from graphrag_drift.dump_utils import quote_identifier
 
 
 def test_quote_identifier_keeps_safe_names():
