@@ -10,14 +10,7 @@ from typing import Any
 
 from neo4j import GraphDatabase
 
-
-SAFE_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
-def quote_identifier(value: str) -> str:
-    if SAFE_IDENTIFIER.fullmatch(value):
-        return value
-    return "`" + value.replace("`", "``") + "`"
+from graphrag_drift.dump_utils import quote_identifier
 
 
 def load_target() -> tuple[str, str, str, str]:
