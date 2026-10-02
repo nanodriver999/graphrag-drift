@@ -1,6 +1,7 @@
 name: tests
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feature/langgraph-graphrag-mvp
@@ -113,7 +114,7 @@ jobs:
           retention-days: 1
 
   docker-import-from-dump-repo:
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
