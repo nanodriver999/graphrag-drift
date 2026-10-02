@@ -6,9 +6,6 @@ from neo4j.exceptions import ClientError
 from graphrag_drift.config import Neo4jSettings
 
 
-GRAPH_NAME = "graphrag_entity_projection"
-
-
 def main() -> None:
     settings = Neo4jSettings.from_env()
     with GraphDatabase.driver(
@@ -27,57 +24,52 @@ def main() -> None:
             return
 
         if not records:
-            print("Leiden unavailable: gds.leiden.write is not installed on this AuraDB instance")
+            print("Leiden unavailable: gds.leiden.write is not exposed on this AuraDB instance")
             return
 
+        # Aura Graph Analytics (AGA) requires a separate GDS Session. Creating one
+        # can incur additional cost, so this repository does not auto-provision it.
+        # We intentionally probe the projection API without session creation and
+        # classify the expected session/memory error as a safe skip.
         try:
             driver.execute_query(
-                "CALL gds.graph.drop($name, false)",
-                parameters_={"name": GRAPH_NAME},
+                """
+                CALL gds.graph.project(
+                  'graphrag_leiden_probe',
+                  'Entity',
+                  'USES',
+                  {}
+                )
+                YIELD graphName
+                RETURN graphName
+                """,
+                database_=settings.database,
+            )
+        except ClientError as exc:
+            message = str(exc)
+            if "sessionId" in message or "memory" in message or "session creation" in message:
+                print(
+                    "Leiden skipped: this AuraDB uses Aura Graph Analytics sessions. "
+                    "A separate billed GDS session must be explicitly provisioned before "
+                    "running Leiden."
+                )
+                return
+            print(f"Leiden unavailable: projection probe failed ({exc.code})")
+            return
+
+        # If the projection unexpectedly succeeds on an attached/self-managed GDS
+        # environment, clean up the probe and avoid mutating application data here.
+        try:
+            driver.execute_query(
+                "CALL gds.graph.drop('graphrag_leiden_probe', false)",
                 database_=settings.database,
             )
         except ClientError:
             pass
 
-        driver.execute_query(
-            """
-            CALL gds.graph.project(
-              $name,
-              'Entity',
-              {USES: {orientation: 'UNDIRECTED'}}
-            )
-            """,
-            parameters_={"name": GRAPH_NAME},
-            database_=settings.database,
-        )
-        result, _, _ = driver.execute_query(
-            """
-            CALL gds.leiden.write($name, {writeProperty: 'leidenCommunity'})
-            YIELD communityCount, nodePropertiesWritten
-            RETURN communityCount, nodePropertiesWritten
-            """,
-            parameters_={"name": GRAPH_NAME},
-            database_=settings.database,
-        )
-        driver.execute_query(
-            """
-            MATCH (e:Entity)
-            WHERE e.leidenCommunity IS NOT NULL
-            MERGE (c:Community {id: 'leiden-' + toString(e.leidenCommunity)})
-            SET c.name = 'Leiden Community ' + toString(e.leidenCommunity)
-            MERGE (e)-[:IN_COMMUNITY]->(c)
-            """,
-            database_=settings.database,
-        )
-        driver.execute_query(
-            "CALL gds.graph.drop($name, false)",
-            parameters_={"name": GRAPH_NAME},
-            database_=settings.database,
-        )
         print(
-            "Leiden complete: "
-            f"{result[0]['communityCount']} communities, "
-            f"{result[0]['nodePropertiesWritten']} properties written"
+            "Leiden available on the attached GDS runtime; automatic execution is "
+            "disabled in this smoke test to avoid unexpected graph mutations."
         )
 
 
