@@ -59,7 +59,7 @@ def import_graph(path: Path, *, clear: bool = True) -> dict[str, int]:
         driver.execute_query(
             """
             CREATE INDEX source_element_id IF NOT EXISTS
-            FOR (n) ON (n.__source_element_id)
+            FOR (n:__DumpImport) ON (n.__source_element_id)
             """,
             database_=database,
         )
@@ -78,6 +78,19 @@ def import_graph(path: Path, *, clear: bool = True) -> dict[str, int]:
                 parameters_={"rows": rows},
                 database_=database,
             )
+
+
+        driver.execute_query(
+            """
+            MATCH (n:__DumpImport)
+            REMOVE n:__DumpImport
+            """,
+            database_=database,
+        )
+        driver.execute_query(
+            "DROP INDEX source_element_id IF EXISTS",
+            database_=database,
+        )
 
         counts, _, _ = driver.execute_query(
             """
