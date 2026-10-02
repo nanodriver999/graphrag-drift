@@ -1,11 +1,12 @@
 [project]
 name = "graphrag-drift"
-version = "0.2.0"
+version = "0.3.0"
 description = "LangGraph implementation of Local, Global, and DRIFT-style GraphRAG search orchestration"
 requires-python = ">=3.11"
 dependencies = [
   "langgraph>=0.2.0",
   "neo4j>=5.28,<7",
+  "neo4j-graphrag>=1.18,<2",
 ]
 
 [project.optional-dependencies]
