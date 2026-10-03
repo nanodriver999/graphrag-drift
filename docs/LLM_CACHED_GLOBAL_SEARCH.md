@@ -35,3 +35,30 @@ current data dump SHA
 
 This module only constructs the runtime. An executable CLI and live-provider
 smoke test are separate tasks.
+
+
+## Run
+
+After setting the environment variables above:
+
+```bash
+python scripts/run_llm_cached_global_search.py \
+  "방사선안전관리자의 의무는 무엇인가?" \
+  --data-repo ../graphrag-drift-data \
+  --top-k 3
+```
+
+The command performs:
+
+```text
+query
+  -> cached Community Report retrieval
+  -> LLM map for each selected community
+  -> filter NOT_RELEVANT partials
+  -> LLM global reduce
+  -> JSON output
+```
+
+The data repository's Community Reports remain the grounding source. The LLM is
+used to select relevant facts from those cached reports and synthesize the final
+Global Search answer.
