@@ -1,3 +1,4 @@
+from .openai_compatible import OpenAICompatibleTextGenerator
 from .global_llm_reasoner import GlobalLLMReasoner, TextGenerator
 from .cached_retrieval import CachedCommunityReportRetriever
 from .community_report_store import FileCommunityReportStore
@@ -14,5 +15,6 @@ __all__ = [
     "SearchHit",
     "TextGenerator",
     "InMemoryRetriever",
+    "OpenAICompatibleTextGenerator",
     "Retriever",
 ]
