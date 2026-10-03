@@ -1,3 +1,4 @@
+from .global_search_runtime import GlobalSearchLLMSettings, build_llm_cached_global_search_engine
 from .openai_compatible import OpenAICompatibleTextGenerator
 from .global_llm_reasoner import GlobalLLMReasoner, TextGenerator
 from .cached_retrieval import CachedCommunityReportRetriever
@@ -11,7 +12,9 @@ __all__ = [
     "CommunityReport",
     "FileCommunityReportStore",
     "GlobalLLMReasoner",
+    "GlobalSearchLLMSettings",
     "GraphRAGEngine",
+    "build_llm_cached_global_search_engine",
     "SearchHit",
     "TextGenerator",
     "InMemoryRetriever",
