@@ -5,6 +5,7 @@ on:
     paths:
       - "src/graphrag_drift/search_llm_reasoner.py"
       - "src/graphrag_drift/neo4j_graphrag_retrieval.py"
+      - "src/graphrag_drift/query_expansion.py"
       - "scripts/setup_vector_index.py"
       - "scripts/run_llm_aura_search.py"
       - ".github/workflows/live-aura-muse-local-drift.yml"
@@ -119,6 +120,8 @@ jobs:
           assert result["evidence"], result
           assert result["answer"].strip(), result
           assert any(item["id"].startswith("chunk:") for item in result["evidence"]), result["evidence"]
+          assert len(result.get("retrieval_queries", [])) >= 2, result
+          print("Local retrieval queries:", result["retrieval_queries"])
           print("Local evidence IDs:", [item["id"] for item in result["evidence"]])
           print("Local answer:", result["answer"])
           PY
