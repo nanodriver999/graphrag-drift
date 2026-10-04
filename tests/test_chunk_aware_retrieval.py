@@ -37,3 +37,18 @@ def test_rerank_deduplicates_ids_and_respects_top_k() -> None:
     assert len(ranked) == 1
     assert ranked[0].id == "chunk:1"
     assert ranked[0].score == 0.8
+
+
+def test_as_of_date_normalization() -> None:
+    from graphrag_drift.neo4j_graphrag_retrieval import _normalize_as_of_date
+
+    assert _normalize_as_of_date("2026-10-05") == "20261005"
+    assert _normalize_as_of_date("20261005") == "20261005"
+
+
+def test_invalid_as_of_date_is_rejected() -> None:
+    import pytest
+    from graphrag_drift.neo4j_graphrag_retrieval import _normalize_as_of_date
+
+    with pytest.raises(ValueError):
+        _normalize_as_of_date("2026/10/05")
