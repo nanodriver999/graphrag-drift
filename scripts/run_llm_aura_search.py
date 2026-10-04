@@ -8,6 +8,7 @@ from dataclasses import asdict
 from graphrag_drift import (
     GraphRAGEngine,
     GraphRAGLLMReasoner,
+    LLMQueryExpandingRetriever,
     OpenAICompatibleTextGenerator,
 )
 from graphrag_drift.config import Neo4jSettings
@@ -38,13 +39,24 @@ def main() -> None:
     parser.add_argument("query")
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--max-depth", type=int, default=2)
+    parser.add_argument("--no-query-expansion", action="store_true")
     args = parser.parse_args()
 
-    retriever = Neo4jGraphRAGRetriever.from_settings(Neo4jSettings.from_env())
+    base_retriever = Neo4jGraphRAGRetriever.from_settings(Neo4jSettings.from_env())
     try:
-        reasoner = GraphRAGLLMReasoner(generator=_generator_from_env())
-        engine = GraphRAGEngine(retriever=retriever, reasoner=reasoner)
+        generator = _generator_from_env()
+        reasoner = GraphRAGLLMReasoner(generator=generator)
 
+        query_expander = None
+        retriever = base_retriever
+        if args.mode == "local" and not args.no_query_expansion:
+            query_expander = LLMQueryExpandingRetriever(
+                retriever=base_retriever,
+                generator=generator,
+            )
+            retriever = query_expander
+
+        engine = GraphRAGEngine(retriever=retriever, reasoner=reasoner)
         if args.mode == "local":
             result = engine.local(args.query, top_k=args.top_k)
         else:
@@ -57,9 +69,11 @@ def main() -> None:
         serializable = dict(result)
         if "evidence" in serializable:
             serializable["evidence"] = [asdict(hit) for hit in serializable["evidence"]]
+        if query_expander is not None:
+            serializable["retrieval_queries"] = query_expander.last_queries
         print(json.dumps(serializable, ensure_ascii=False, indent=2))
     finally:
-        retriever.close()
+        base_retriever.close()
 
 
 if __name__ == "__main__":
