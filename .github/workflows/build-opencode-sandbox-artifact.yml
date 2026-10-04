@@ -1,0 +1,33 @@
+name: Build OpenCode sandbox artifact
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/build-opencode-sandbox-artifact.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-opencode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download pinned OpenCode CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="1.18.34"
+          URL="https://github.com/anomalyco/opencode/releases/download/v${VERSION}/opencode-linux-x64.tar.gz"
+          curl -fL --retry 3 "$URL" -o opencode.tar.gz
+          echo "0f22479647226d1d2dd99595d20082ee7bda3870b62dc6a90b41efc1a71d7e9a  opencode.tar.gz" | sha256sum -c -
+          tar -xzf opencode.tar.gz
+          ./opencode --version
+
+      - name: Upload OpenCode CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-linux-x64-v1.18.34
+          path: opencode
+          retention-days: 1
