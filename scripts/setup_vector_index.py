@@ -5,7 +5,40 @@ from neo4j_graphrag.indexes import create_fulltext_index, create_vector_index
 
 from graphrag_drift.config import Neo4jSettings
 from graphrag_drift.embedding import DEFAULT_EMBEDDING_DIMENSIONS, hash_embedding
-from graphrag_drift.neo4j_graphrag_retrieval import ENTITY_FULLTEXT_INDEX, ENTITY_VECTOR_INDEX
+from graphrag_drift.neo4j_graphrag_retrieval import (
+    CHUNK_FULLTEXT_INDEX,
+    CHUNK_VECTOR_INDEX,
+    ENTITY_FULLTEXT_INDEX,
+    ENTITY_VECTOR_INDEX,
+)
+
+
+def _embed_nodes(driver, *, database: str | None, label: str, text_expression: str) -> int:
+    records, _, _ = driver.execute_query(
+        f"""
+        MATCH (n:{label})
+        RETURN elementId(n) AS element_id,
+               trim({text_expression}) AS text
+        """,
+        database_=database,
+    )
+    rows = [
+        {"element_id": record["element_id"], "embedding": hash_embedding(record["text"])}
+        for record in records
+        if str(record["text"] or "").strip()
+    ]
+    if rows:
+        driver.execute_query(
+            f"""
+            UNWIND $rows AS row
+            MATCH (n:{label}) WHERE elementId(n) = row.element_id
+            SET n.embedding = row.embedding
+            RETURN count(n) AS updated
+            """,
+            parameters_={"rows": rows},
+            database_=database,
+        )
+    return len(rows)
 
 
 def main() -> None:
@@ -34,30 +67,41 @@ def main() -> None:
             fail_if_exists=False,
             neo4j_database=settings.database,
         )
+        create_vector_index(
+            driver,
+            CHUNK_VECTOR_INDEX,
+            label="Chunk",
+            embedding_property="embedding",
+            dimensions=DEFAULT_EMBEDDING_DIMENSIONS,
+            similarity_fn="cosine",
+            fail_if_exists=False,
+            neo4j_database=settings.database,
+        )
+        create_fulltext_index(
+            driver,
+            CHUNK_FULLTEXT_INDEX,
+            label="Chunk",
+            node_properties=["text", "content"],
+            fail_if_exists=False,
+            neo4j_database=settings.database,
+        )
 
-        records, _, _ = driver.execute_query(
-            """
-            MATCH (e:Entity)
-            RETURN elementId(e) AS element_id,
-                   trim(coalesce(e.name, '') + ' ' + coalesce(e.description, '')) AS text
-            """,
-            database_=settings.database,
+        entity_count = _embed_nodes(
+            driver,
+            database=settings.database,
+            label="Entity",
+            text_expression="coalesce(n.name, '') + ' ' + coalesce(n.description, '')",
         )
-        rows = [
-            {"element_id": record["element_id"], "embedding": hash_embedding(record["text"])}
-            for record in records
-        ]
-        driver.execute_query(
-            """
-            UNWIND $rows AS row
-            MATCH (e:Entity) WHERE elementId(e) = row.element_id
-            SET e.embedding = row.embedding
-            RETURN count(e) AS updated
-            """,
-            parameters_={"rows": rows},
-            database_=settings.database,
+        chunk_count = _embed_nodes(
+            driver,
+            database=settings.database,
+            label="Chunk",
+            text_expression="coalesce(n.text, n.content, '')",
         )
-        print(f"Vector setup complete: {len(rows)} entities embedded")
+        print(
+            "Vector setup complete: "
+            f"{entity_count} entities embedded, {chunk_count} chunks embedded"
+        )
 
 
 if __name__ == "__main__":
