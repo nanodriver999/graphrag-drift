@@ -276,15 +276,21 @@ class Neo4jGraphRAGRetriever:
 
     def local_search(self, query: str, *, top_k: int = 5) -> list[SearchHit]:
         vector = hash_embedding(query)
-        candidate_k = max(top_k * 2, 6)
+        entity_candidate_k = max(top_k * 2, 6)
+        chunk_candidate_k = max(top_k * 8, 24)
 
         hits = self._search_entities(
             query,
             vector=vector,
-            candidate_k=candidate_k,
+            candidate_k=entity_candidate_k,
         )
         if self.include_chunks:
-            hits.extend(self._search_chunks(query, candidate_k=candidate_k))
+            hits.extend(
+                self._search_chunks(
+                    query,
+                    candidate_k=chunk_candidate_k,
+                )
+            )
 
         return _rerank_hits(query, hits, top_k=top_k)
 
