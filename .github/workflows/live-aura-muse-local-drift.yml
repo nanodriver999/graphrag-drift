@@ -59,6 +59,15 @@ jobs:
       - name: Build Entity and Chunk retrieval indexes
         run: python scripts/setup_vector_index.py
 
+      - name: Report temporal law coverage
+        shell: bash
+        run: |
+          python scripts/check_aura_temporal_coverage.py \
+            --as-of 2026-10-05 \
+            --law-id 011435 \
+            --law-id 011484 \
+            --law-id 011880 | tee "$RUNNER_TEMP/temporal-coverage.json"
+
       - name: Download pinned OpenCode CLI
         shell: bash
         run: |
