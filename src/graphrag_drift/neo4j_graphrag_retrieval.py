@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+import os
 import re
 
 from neo4j import GraphDatabase, Driver
@@ -24,9 +26,11 @@ CALL () {
   RETURN row.node AS node,
          CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
   UNION
-  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k})
+  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k * 3})
   YIELD node, score
-  WITH collect({node: node, score: score}) AS rows, max(score) AS max_score
+  WHERE coalesce(node.officialEffectiveDate, '') = ''
+     OR node.officialEffectiveDate <= $as_of_date
+  WITH collect({node: node, score: score})[0..$candidate_k] AS rows, max(score) AS max_score
   UNWIND rows AS row
   RETURN row.node AS node,
          CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
@@ -84,6 +88,8 @@ CALL () {
          CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
   UNION
   MATCH (node:Chunk)
+  WHERE coalesce(node.officialEffectiveDate, '') = ''
+     OR node.officialEffectiveDate <= $as_of_date
   WITH node, toLower(coalesce(node.text, node.content, '')) AS text
   WITH node, size([term IN $terms WHERE text CONTAINS term]) AS overlap
   WHERE overlap > 0
@@ -157,6 +163,14 @@ def _query_terms(query: str) -> list[str]:
     return list(dict.fromkeys(expanded))
 
 
+def _normalize_as_of_date(value: str | None) -> str:
+    raw = value or os.getenv("GRAPHRAG_AS_OF_DATE") or date.today().isoformat()
+    normalized = raw.replace("-", "")
+    if not re.fullmatch(r"\d{8}", normalized):
+        raise ValueError("as_of_date must use YYYY-MM-DD or YYYYMMDD")
+    return normalized
+
+
 def _rerank_hits(query: str, hits: list[SearchHit], *, top_k: int) -> list[SearchHit]:
     terms = _query_terms(query)
     unique: dict[str, SearchHit] = {}
@@ -181,6 +195,7 @@ class Neo4jGraphRAGRetriever:
     database: str | None = None
     use_hybrid: bool = True
     include_chunks: bool = True
+    as_of_date: str | None = None
 
     @classmethod
     def from_settings(
@@ -189,6 +204,7 @@ class Neo4jGraphRAGRetriever:
         *,
         use_hybrid: bool = True,
         include_chunks: bool = True,
+        as_of_date: str | None = None,
     ) -> "Neo4jGraphRAGRetriever":
         driver = GraphDatabase.driver(
             settings.uri,
@@ -200,6 +216,7 @@ class Neo4jGraphRAGRetriever:
             database=settings.database,
             use_hybrid=use_hybrid,
             include_chunks=include_chunks,
+            as_of_date=_normalize_as_of_date(as_of_date),
         )
 
     def close(self) -> None:
@@ -244,6 +261,7 @@ class Neo4jGraphRAGRetriever:
                 "query_text": query,
                 "terms": _query_terms(query),
                 "candidate_k": candidate_k,
+                "as_of_date": _normalize_as_of_date(self.as_of_date),
             },
             database_=self.database,
         )
