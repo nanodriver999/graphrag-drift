@@ -15,8 +15,8 @@ def _format_evidence(evidence: list[SearchHit], *, limit: int = 20) -> str:
     rows: list[str] = []
     for hit in list(unique.values())[:limit]:
         text = hit.text.strip()
-        if len(text) > 2000:
-            text = text[:2000] + "..."
+        if len(text) > 6000:
+            text = text[:6000] + "..."
         rows.append(f"[{hit.id}] score={hit.score:.4f}\n{text}")
     return "\n\n--- EVIDENCE ---\n\n".join(rows)
 
