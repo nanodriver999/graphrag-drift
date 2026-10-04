@@ -3,10 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-import neo4j
 from neo4j import GraphDatabase, Driver
-from neo4j_graphrag.retrievers import HybridCypherRetriever, VectorCypherRetriever
-from neo4j_graphrag.types import RetrieverResultItem
 
 from .config import Neo4jSettings
 from .embedding import hash_embedding
@@ -19,7 +16,25 @@ ENTITY_FULLTEXT_INDEX = "entity_fulltext"
 CHUNK_VECTOR_INDEX = "chunk_embedding"
 CHUNK_FULLTEXT_INDEX = "chunk_fulltext"
 
-ENTITY_RETRIEVAL_QUERY = """
+ENTITY_HYBRID_QUERY = """
+CALL () {
+  CALL db.index.vector.queryNodes($vector_index, $candidate_k, $query_vector)
+  YIELD node, score
+  WITH collect({node: node, score: score}) AS rows, max(score) AS max_score
+  UNWIND rows AS row
+  RETURN row.node AS node,
+         CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
+  UNION
+  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k})
+  YIELD node, score
+  WITH collect({node: node, score: score}) AS rows, max(score) AS max_score
+  UNWIND rows AS row
+  RETURN row.node AS node,
+         CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
+}
+WITH node, max(score) AS score
+ORDER BY score DESC, elementId(node)
+LIMIT $candidate_k
 OPTIONAL MATCH (node)-[r]-(neighbor:Entity)
 WITH node, score,
      collect(DISTINCT coalesce(neighbor.name, neighbor.id))[0..5] AS neighbors,
@@ -38,7 +53,25 @@ RETURN 'entity:' + coalesce(node.id, elementId(node)) AS id,
        score
 """
 
-CHUNK_RETRIEVAL_QUERY = """
+CHUNK_HYBRID_QUERY = """
+CALL () {
+  CALL db.index.vector.queryNodes($vector_index, $candidate_k, $query_vector)
+  YIELD node, score
+  WITH collect({node: node, score: score}) AS rows, max(score) AS max_score
+  UNWIND rows AS row
+  RETURN row.node AS node,
+         CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
+  UNION
+  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k})
+  YIELD node, score
+  WITH collect({node: node, score: score}) AS rows, max(score) AS max_score
+  UNWIND rows AS row
+  RETURN row.node AS node,
+         CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
+}
+WITH node, max(score) AS score
+ORDER BY score DESC, elementId(node)
+LIMIT $candidate_k
 OPTIONAL MATCH (node)-[:MENTIONS]->(entity:Entity)
 WITH node, score,
      collect(DISTINCT coalesce(entity.name, entity.id))[0..8] AS entities
@@ -50,15 +83,42 @@ RETURN 'chunk:' + coalesce(node.id, elementId(node)) AS id,
        score
 """
 
+ENTITY_VECTOR_QUERY = """
+CALL db.index.vector.queryNodes($vector_index, $candidate_k, $query_vector)
+YIELD node, score
+OPTIONAL MATCH (node)-[r]-(neighbor:Entity)
+WITH node, score,
+     collect(DISTINCT coalesce(neighbor.name, neighbor.id))[0..5] AS neighbors,
+     collect(DISTINCT type(r))[0..5] AS rel_types
+OPTIONAL MATCH (chunk:Chunk)-[:MENTIONS]->(node)
+WITH node, score, neighbors, rel_types,
+     collect(DISTINCT coalesce(chunk.text, chunk.content))[0..3] AS chunks
+RETURN 'entity:' + coalesce(node.id, elementId(node)) AS id,
+       trim(
+         coalesce(node.name, '') + ' | ' +
+         coalesce(node.description, '') +
+         CASE WHEN size(neighbors) > 0 THEN ' | neighbors: ' + reduce(s = '', x IN neighbors | s + CASE WHEN s = '' THEN '' ELSE ', ' END + coalesce(toString(x), '')) ELSE '' END +
+         CASE WHEN size(rel_types) > 0 THEN ' | relationships: ' + reduce(s = '', x IN rel_types | s + CASE WHEN s = '' THEN '' ELSE ', ' END + x) ELSE '' END +
+         CASE WHEN size(chunks) > 0 THEN ' | chunks: ' + reduce(s = '', x IN chunks | s + CASE WHEN s = '' THEN '' ELSE ' || ' END + coalesce(toString(x), '')) ELSE '' END
+       ) AS text,
+       score
+ORDER BY score DESC
+"""
 
-def _formatter(record: neo4j.Record) -> RetrieverResultItem:
-    return RetrieverResultItem(
-        content=str(record.get("text") or ""),
-        metadata={
-            "id": str(record.get("id") or ""),
-            "score": float(record.get("score") or 0.0),
-        },
-    )
+CHUNK_VECTOR_QUERY = """
+CALL db.index.vector.queryNodes($vector_index, $candidate_k, $query_vector)
+YIELD node, score
+OPTIONAL MATCH (node)-[:MENTIONS]->(entity:Entity)
+WITH node, score,
+     collect(DISTINCT coalesce(entity.name, entity.id))[0..8] AS entities
+RETURN 'chunk:' + coalesce(node.id, elementId(node)) AS id,
+       trim(
+         coalesce(node.text, node.content, '') +
+         CASE WHEN size(entities) > 0 THEN ' | mentioned entities: ' + reduce(s = '', x IN entities | s + CASE WHEN s = '' THEN '' ELSE ', ' END + coalesce(toString(x), '')) ELSE '' END
+       ) AS text,
+       score
+ORDER BY score DESC
+"""
 
 
 def _query_terms(query: str) -> list[str]:
@@ -70,12 +130,7 @@ def _query_terms(query: str) -> list[str]:
 
 
 def _rerank_hits(query: str, hits: list[SearchHit], *, top_k: int) -> list[SearchHit]:
-    """Merge entity/chunk results with a small exact-term bonus.
-
-    Hybrid retrieval remains the primary signal. The lexical bonus helps Korean
-    legal terms survive cross-index merging when an exact statute phrase appears
-    in a Chunk but the hash embedding score is weak.
-    """
+    """Merge entity/chunk results with a small exact-term bonus."""
     terms = _query_terms(query)
     unique: dict[str, SearchHit] = {}
     for hit in hits:
@@ -123,85 +178,63 @@ class Neo4jGraphRAGRetriever:
     def close(self) -> None:
         self.driver.close()
 
-    def _retriever(
+    def _run_search(
         self,
+        cypher: str,
         *,
-        vector_index_name: str,
-        fulltext_index_name: str,
-        retrieval_query: str,
-    ):
-        if self.use_hybrid:
-            return HybridCypherRetriever(
-                driver=self.driver,
-                vector_index_name=vector_index_name,
-                fulltext_index_name=fulltext_index_name,
-                retrieval_query=retrieval_query,
-                result_formatter=_formatter,
-                neo4j_database=self.database,
-            )
-        return VectorCypherRetriever(
-            driver=self.driver,
-            index_name=vector_index_name,
-            retrieval_query=retrieval_query,
-            result_formatter=_formatter,
-            neo4j_database=self.database,
-        )
-
-    def _search_index(
-        self,
+        vector_index: str,
+        fulltext_index: str,
         query: str,
-        *,
         vector: list[float],
-        vector_index_name: str,
-        fulltext_index_name: str,
-        retrieval_query: str,
-        top_k: int,
+        candidate_k: int,
     ) -> list[SearchHit]:
-        retriever = self._retriever(
-            vector_index_name=vector_index_name,
-            fulltext_index_name=fulltext_index_name,
-            retrieval_query=retrieval_query,
-        )
+        params = {
+            "vector_index": vector_index,
+            "query_vector": vector,
+            "candidate_k": candidate_k,
+        }
         if self.use_hybrid:
-            result = retriever.search(
-                query_text=query,
-                query_vector=vector,
-                top_k=top_k,
-            )
-        else:
-            result = retriever.search(query_vector=vector, top_k=top_k)
+            params["fulltext_index"] = fulltext_index
+            params["query_text"] = query
 
+        records, _, _ = self.driver.execute_query(
+            cypher,
+            parameters_=params,
+            database_=self.database,
+        )
         return [
             SearchHit(
-                id=str(item.metadata.get("id", "")),
-                text=item.content,
-                score=float(item.metadata.get("score", 0.0)),
+                id=str(record["id"]),
+                text=str(record["text"] or ""),
+                score=float(record["score"] or 0.0),
             )
-            for item in result.items
+            for record in records
         ]
 
     def local_search(self, query: str, *, top_k: int = 5) -> list[SearchHit]:
         vector = hash_embedding(query)
-        candidate_k = max(top_k, 3)
+        candidate_k = max(top_k * 2, 6)
 
-        hits = self._search_index(
-            query,
+        entity_query = ENTITY_HYBRID_QUERY if self.use_hybrid else ENTITY_VECTOR_QUERY
+        hits = self._run_search(
+            entity_query,
+            vector_index=ENTITY_VECTOR_INDEX,
+            fulltext_index=ENTITY_FULLTEXT_INDEX,
+            query=query,
             vector=vector,
-            vector_index_name=ENTITY_VECTOR_INDEX,
-            fulltext_index_name=ENTITY_FULLTEXT_INDEX,
-            retrieval_query=ENTITY_RETRIEVAL_QUERY,
-            top_k=candidate_k,
+            candidate_k=candidate_k,
         )
 
         if self.include_chunks:
+            chunk_query = CHUNK_HYBRID_QUERY if self.use_hybrid else CHUNK_VECTOR_QUERY
             hits.extend(
-                self._search_index(
-                    query,
+                self._run_search(
+                    chunk_query,
+                    vector_index=CHUNK_VECTOR_INDEX,
+                    fulltext_index=CHUNK_FULLTEXT_INDEX,
+                    query=query,
                     vector=vector,
-                    vector_index_name=CHUNK_VECTOR_INDEX,
-                    fulltext_index_name=CHUNK_FULLTEXT_INDEX,
-                    retrieval_query=CHUNK_RETRIEVAL_QUERY,
-                    top_k=candidate_k,
+                    candidate_k=candidate_k,
                 )
             )
 
