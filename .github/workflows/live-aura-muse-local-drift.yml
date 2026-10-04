@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "src/graphrag_drift/search_llm_reasoner.py"
+      - "src/graphrag_drift/neo4j_graphrag_retrieval.py"
+      - "scripts/setup_vector_index.py"
       - "scripts/run_llm_aura_search.py"
       - ".github/workflows/live-aura-muse-local-drift.yml"
   workflow_dispatch:
@@ -51,6 +53,9 @@ jobs:
           echo "NEO4J_DATABASE=${NEO4J_DATABASE:-}" >> "$GITHUB_ENV"
           unset NEO4J_AURA_BLOB
           rm -f "$secret_file"
+
+      - name: Build Entity and Chunk retrieval indexes
+        run: python scripts/setup_vector_index.py
 
       - name: Download pinned OpenCode CLI
         shell: bash
@@ -106,14 +111,15 @@ jobs:
           OPENAI_COMPATIBLE_TEMPERATURE: "0"
         shell: bash
         run: |
-          python scripts/run_llm_aura_search.py local             "방사선안전관리자의 주요 의무는 무엇인가?"             --top-k 2 > "$RUNNER_TEMP/local.json"
+          python scripts/run_llm_aura_search.py local             "방사선안전관리자의 주요 의무는 무엇인가?"             --top-k 4 > "$RUNNER_TEMP/local.json"
           python - <<'PY'
           import json, os
           from pathlib import Path
           result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "local.json").read_text(encoding="utf-8"))
           assert result["evidence"], result
           assert result["answer"].strip(), result
-          print("Local evidence count:", len(result["evidence"]))
+          assert any(item["id"].startswith("chunk:") for item in result["evidence"]), result["evidence"]
+          print("Local evidence IDs:", [item["id"] for item in result["evidence"]])
           print("Local answer:", result["answer"])
           PY
 
@@ -125,15 +131,16 @@ jobs:
           OPENAI_COMPATIBLE_TEMPERATURE: "0"
         shell: bash
         run: |
-          python scripts/run_llm_aura_search.py drift             "업무대행자와 방사선안전관리자의 관계와 주요 의무를 설명해줘."             --top-k 1             --max-depth 1 > "$RUNNER_TEMP/drift.json"
+          python scripts/run_llm_aura_search.py drift             "업무대행자와 방사선안전관리자의 관계와 주요 의무를 설명해줘."             --top-k 2             --max-depth 1 > "$RUNNER_TEMP/drift.json"
           python - <<'PY'
           import json, os
           from pathlib import Path
           result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "drift.json").read_text(encoding="utf-8"))
           assert result["evidence"], result
           assert result["answer"].strip(), result
+          assert any(item["id"].startswith("chunk:") for item in result["evidence"]), result["evidence"]
           print("DRIFT depth:", result["depth"])
-          print("DRIFT evidence count:", len(result["evidence"]))
+          print("DRIFT evidence IDs:", [item["id"] for item in result["evidence"]])
           print("DRIFT answer:", result["answer"])
           PY
 
