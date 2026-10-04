@@ -93,12 +93,28 @@ CALL () {
 WITH node, max(score) AS score
 ORDER BY score DESC, elementId(node)
 LIMIT $candidate_k
+CALL (node) {
+  WITH node, node.articleKey AS article_key
+  OPTIONAL MATCH (sibling:Chunk)
+  WHERE article_key IS NOT NULL AND sibling.articleKey = article_key
+  WITH sibling
+  ORDER BY coalesce(sibling.position, 0), elementId(sibling)
+  RETURN collect(coalesce(sibling.text, sibling.content))[0..12] AS article_chunks
+}
 OPTIONAL MATCH (node)-[:MENTIONS]->(entity:Entity)
-WITH node, score,
+WITH node, score, article_chunks,
      collect(DISTINCT coalesce(entity.name, entity.id))[0..8] AS entities
-RETURN 'chunk:' + coalesce(node.id, elementId(node)) AS id,
+RETURN CASE
+         WHEN node.articleKey IS NOT NULL
+         THEN 'chunk-article:' + node.articleKey
+         ELSE 'chunk:' + coalesce(node.id, elementId(node))
+       END AS id,
        trim(
-         coalesce(node.text, node.content, '') +
+         CASE
+           WHEN size(article_chunks) > 0
+           THEN reduce(s = '', x IN article_chunks | s + CASE WHEN s = '' THEN '' ELSE ' || ' END + coalesce(toString(x), ''))
+           ELSE coalesce(node.text, node.content, '')
+         END +
          CASE WHEN size(entities) > 0 THEN ' | mentioned entities: ' + reduce(s = '', x IN entities | s + CASE WHEN s = '' THEN '' ELSE ', ' END + coalesce(toString(x), '')) ELSE '' END
        ) AS text,
        score
@@ -152,7 +168,7 @@ def _rerank_hits(query: str, hits: list[SearchHit], *, top_k: int) -> list[Searc
     def rank(hit: SearchHit) -> tuple[float, int, float]:
         lowered = hit.text.lower()
         overlap = sum(1 for term in terms if term in lowered)
-        chunk_bonus = 0.05 if hit.id.startswith("chunk:") and overlap else 0.0
+        chunk_bonus = 0.05 if hit.id.startswith("chunk") and overlap else 0.0
         blended = hit.score + min(overlap, 4) * 0.15 + chunk_bonus
         return (blended, overlap, hit.score)
 
