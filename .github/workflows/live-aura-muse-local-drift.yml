@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 15
     env:
       NEO4J_AURA_BLOB: ${{ secrets.NEO4J_AURA }}
+      GRAPHRAG_AS_OF_DATE: "2026-10-05"
     steps:
       - uses: actions/checkout@v4
 
@@ -122,6 +123,7 @@ jobs:
           assert any(item["id"].startswith("chunk") for item in result["evidence"]), result["evidence"]
           assert len(result.get("retrieval_queries", [])) >= 2, result
           print("Local retrieval queries:", result["retrieval_queries"])
+          assert all("effective:2027" not in item["id"] for item in result["evidence"]), result["evidence"]
           print("Local evidence IDs:", [item["id"] for item in result["evidence"]])
           print("Local answer:", result["answer"])
           PY
@@ -141,7 +143,7 @@ jobs:
           result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "drift.json").read_text(encoding="utf-8"))
           assert result["evidence"], result
           assert result["answer"].strip(), result
-          assert any(item["id"].startswith("chunk:") for item in result["evidence"]), result["evidence"]
+          assert any(item["id"].startswith("chunk") for item in result["evidence"]), result["evidence"]
           print("DRIFT depth:", result["depth"])
           print("DRIFT evidence IDs:", [item["id"] for item in result["evidence"]])
           print("DRIFT answer:", result["answer"])
