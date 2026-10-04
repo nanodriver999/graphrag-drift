@@ -98,8 +98,12 @@ def main() -> None:
             label="Chunk",
             text_expression="coalesce(n.text, n.content, '')",
         )
+        driver.execute_query(
+            "CALL db.awaitIndexes(300)",
+            database_=settings.database,
+        )
         print(
-            "Vector setup complete: "
+            "Vector setup complete and indexes ONLINE: "
             f"{entity_count} entities embedded, {chunk_count} chunks embedded"
         )
 
