@@ -70,7 +70,7 @@ def test_content_hash_matches_documented_formula() -> None:
     dump_sha = "dump"
     context_sha = "context"
     expected = hashlib.sha256(
-        f"{dump_sha}\\n{context_sha}\\n{REPORT_FORMAT}".encode()
+        f"{dump_sha}\n{context_sha}\n{REPORT_FORMAT}".encode()
     ).hexdigest()
     assert report_content_hash(dump_sha, context_sha) == expected
 
