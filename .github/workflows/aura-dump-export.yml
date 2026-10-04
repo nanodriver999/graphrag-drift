@@ -2,9 +2,25 @@ name: Aura logical dump export
 
 on:
   workflow_dispatch:
+    inputs:
+      as_of_date:
+        description: "Coverage date (YYYY-MM-DD). Empty uses today's date."
+        required: false
+        type: string
+      required_law_ids:
+        description: "Comma-separated law IDs that must have a current-effective version."
+        required: false
+        default: "011435,011484,011880"
+        type: string
+      require_current:
+        description: "Fail export when any required law ID has no current-effective version."
+        required: true
+        default: true
+        type: boolean
   pull_request:
     paths:
       - "scripts/export_aura_logical_dump.py"
+      - "scripts/check_aura_temporal_coverage.py"
       - ".github/workflows/aura-dump-export.yml"
 
 permissions:
@@ -13,18 +29,21 @@ permissions:
 jobs:
   aura-dump-export:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     env:
       NEO4J_AURA_BLOB: ${{ secrets.NEO4J_AURA }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+
       - name: Install
         run: python -m pip install -e ".[dev]"
-      - name: Export Aura logical dump
+
+      - name: Load Aura credentials
         shell: bash
         run: |
           set -euo pipefail
@@ -39,12 +58,83 @@ jobs:
           set -a
           source "$secret_file"
           set +a
+          : "${NEO4J_URI:?NEO4J_URI missing}"
+          : "${NEO4J_USERNAME:?NEO4J_USERNAME missing}"
+          : "${NEO4J_PASSWORD:?NEO4J_PASSWORD missing}"
+          echo "NEO4J_URI=$NEO4J_URI" >> "$GITHUB_ENV"
+          echo "NEO4J_USERNAME=$NEO4J_USERNAME" >> "$GITHUB_ENV"
+          echo "NEO4J_PASSWORD=$NEO4J_PASSWORD" >> "$GITHUB_ENV"
+          echo "NEO4J_DATABASE=${NEO4J_DATABASE:-}" >> "$GITHUB_ENV"
           unset NEO4J_AURA_BLOB
           rm -f "$secret_file"
 
+      - name: Verify temporal coverage
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          AS_OF_DATE: ${{ inputs.as_of_date }}
+          REQUIRED_LAW_IDS: ${{ inputs.required_law_ids }}
+          REQUIRE_CURRENT: ${{ inputs.require_current }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${AS_OF_DATE:-}" ]; then
+            args+=(--as-of "$AS_OF_DATE")
+          fi
+
+          IFS=',' read -ra law_ids <<< "${REQUIRED_LAW_IDS:-}"
+          for raw in "${law_ids[@]}"; do
+            law_id="$(echo "$raw" | xargs)"
+            [ -z "$law_id" ] || args+=(--law-id "$law_id")
+          done
+
+          if [ "${REQUIRE_CURRENT:-true}" = "true" ]; then
+            args+=(--require-current)
+          fi
+
+          python scripts/check_aura_temporal_coverage.py "${args[@]}"             | tee "$RUNNER_TEMP/temporal-coverage.json"
+
+      - name: Export Aura logical dump
+        shell: bash
+        run: |
+          set -euo pipefail
           python scripts/export_aura_logical_dump.py "$RUNNER_TEMP/aura_dump.json"
+
+      - name: Build export metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          dump_path = Path(os.environ["RUNNER_TEMP"]) / "aura_dump.json"
+          payload = json.loads(dump_path.read_text(encoding="utf-8"))
+          metadata = {
+              "format": "graphrag-drift-aura-export-metadata-v1",
+              "exported_at": datetime.now(timezone.utc).isoformat(),
+              "source_repository": os.environ["GITHUB_REPOSITORY"],
+              "source_commit": os.environ["GITHUB_SHA"],
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "raw_sha256": hashlib.sha256(dump_path.read_bytes()).hexdigest(),
+              "raw_bytes": dump_path.stat().st_size,
+              "nodes": len(payload.get("nodes", [])),
+              "relationships": len(payload.get("relationships", [])),
+          }
+          out = Path(os.environ["RUNNER_TEMP"]) / "export-metadata.json"
+          out.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+          print(out.read_text())
+          PY
+
       - uses: actions/upload-artifact@v4
         with:
           name: aura-logical-dump
-          path: ${{ runner.temp }}/aura_dump.json
-          retention-days: 1
+          path: |
+            ${{ runner.temp }}/aura_dump.json
+            ${{ runner.temp }}/export-metadata.json
+            ${{ runner.temp }}/temporal-coverage.json
+          if-no-files-found: ignore
+          retention-days: 3
