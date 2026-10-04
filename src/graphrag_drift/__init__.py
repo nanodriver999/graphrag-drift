@@ -2,6 +2,7 @@ from .global_search_runtime import GlobalSearchLLMSettings, build_llm_cached_glo
 from .openai_compatible import OpenAICompatibleTextGenerator
 from .global_llm_reasoner import GlobalLLMReasoner, TextGenerator
 from .search_llm_reasoner import GraphRAGLLMReasoner
+from .query_expansion import LLMQueryExpandingRetriever
 from .cached_retrieval import CachedCommunityReportRetriever
 from .community_report_store import FileCommunityReportStore
 from .core import GraphRAGEngine
@@ -16,6 +17,7 @@ __all__ = [
     "GlobalSearchLLMSettings",
     "GraphRAGEngine",
     "GraphRAGLLMReasoner",
+    "LLMQueryExpandingRetriever",
     "build_llm_cached_global_search_engine",
     "SearchHit",
     "TextGenerator",
