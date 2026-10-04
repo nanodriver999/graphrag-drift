@@ -1,11 +1,53 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 
 from .global_llm_reasoner import TextGenerator
 from .models import CommunityReport, SearchHit
 from .retrieval import Retriever
+
+
+_PARTICLE_SUFFIXES = (
+    "으로", "에서", "에게", "부터", "까지", "의", "은", "는", "이", "가",
+    "을", "를", "에", "와", "과", "로", "도", "만",
+)
+_GENERIC_QUERY_TERMS = {
+    "주요", "무엇인가", "무엇인지", "설명", "알려줘", "관계", "관련",
+    "의무", "책임", "업무", "직무", "역할",
+}
+_DUTY_TERMS = ("의무", "책임", "업무", "직무", "역할")
+
+
+def _strip_particle(token: str) -> str:
+    for suffix in _PARTICLE_SUFFIXES:
+        if token.endswith(suffix) and len(token) - len(suffix) >= 2:
+            return token[: -len(suffix)]
+    return token
+
+
+def _legal_anchor(query: str) -> str | None:
+    candidates: list[str] = []
+    for token in re.findall(r"[가-힣A-Za-z0-9_]+", query):
+        normalized = _strip_particle(token.strip())
+        if len(normalized) < 3 or normalized in _GENERIC_QUERY_TERMS:
+            continue
+        candidates.append(normalized)
+    if not candidates:
+        return None
+    return max(candidates, key=len)
+
+
+def _deterministic_legal_variants(query: str) -> list[str]:
+    if not any(term in query for term in _DUTY_TERMS):
+        return []
+
+    anchor = _legal_anchor(query)
+    if not anchor:
+        return []
+
+    return [f"{anchor} 업무"]
 
 
 @dataclass
@@ -27,7 +69,8 @@ class LLMQueryExpandingRetriever:
             "Rewrite the user question into at most "
             f"{self.max_expansions} short search queries that can retrieve the governing "
             "clauses. Preserve important named entities. Add likely statutory concepts "
-            "or close legal terms when helpful.\n"
+            "or close legal terms when helpful. For duty/obligation questions, consider "
+            "the statute's wording such as 업무, 직무, 책임, and 준수.\n"
             "Return ONLY a JSON array of strings. Do not answer the question.\n\n"
             f"User question:\n{query}\n"
         )
@@ -35,13 +78,13 @@ class LLMQueryExpandingRetriever:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
-            return []
+            payload = []
 
         if not isinstance(payload, list):
-            return []
+            payload = []
 
         expansions: list[str] = []
-        for item in payload:
+        for item in [*_deterministic_legal_variants(query), *payload]:
             if not isinstance(item, str):
                 continue
             item = item.strip()
