@@ -24,6 +24,10 @@ def hash_embedding(text: str, dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS) ->
         vector[index] += sign
 
     norm = math.sqrt(sum(value * value for value in vector))
-    if norm:
-        vector = [value / norm for value in vector]
-    return vector
+    if not math.isfinite(norm) or norm == 0.0:
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:4], "big") % dimensions
+        vector[index] = 1.0
+        norm = 1.0
+
+    return [value / norm for value in vector]

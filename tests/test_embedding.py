@@ -12,3 +12,10 @@ def test_hash_embedding_is_deterministic_and_normalized():
 
 def test_hash_embedding_changes_with_text():
     assert hash_embedding("local search") != hash_embedding("global search")
+
+
+def test_hash_embedding_never_returns_zero_vector_for_nonempty_text():
+    vector = hash_embedding("방사선안전관리자 업무")
+
+    assert any(value != 0.0 for value in vector)
+    assert abs(sum(value * value for value in vector) - 1.0) < 1e-9
