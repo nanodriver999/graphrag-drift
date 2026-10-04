@@ -85,12 +85,11 @@ def main() -> None:
             label="Entity",
             text_expression="coalesce(n.name, '') + ' ' + coalesce(n.description, '')",
         )
-        chunk_count = _embed_nodes(
-            driver,
-            database=settings.database,
-            label="Chunk",
-            text_expression="coalesce(n.text, n.content, '')",
+        chunk_records, _, _ = driver.execute_query(
+            "MATCH (n:Chunk) RETURN count(n) AS count",
+            database_=settings.database,
         )
+        chunk_count = int(chunk_records[0]["count"]) if chunk_records else 0
 
         _create_indexes(driver, database=settings.database)
         driver.execute_query(
