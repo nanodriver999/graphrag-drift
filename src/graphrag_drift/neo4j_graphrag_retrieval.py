@@ -26,11 +26,9 @@ CALL () {
   RETURN row.node AS node,
          CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
   UNION
-  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k * 3})
+  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k})
   YIELD node, score
-  WHERE coalesce(node.officialEffectiveDate, '') = ''
-     OR node.officialEffectiveDate <= $as_of_date
-  WITH collect({node: node, score: score})[0..$candidate_k] AS rows, max(score) AS max_score
+  WITH collect({node: node, score: score}) AS rows, max(score) AS max_score
   UNWIND rows AS row
   RETURN row.node AS node,
          CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
@@ -80,9 +78,11 @@ ORDER BY score DESC
 
 CHUNK_LEXICAL_QUERY = """
 CALL () {
-  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k})
+  CALL db.index.fulltext.queryNodes($fulltext_index, $query_text, {limit: $candidate_k * 3})
   YIELD node, score
-  WITH collect({node: node, score: score}) AS rows, max(score) AS max_score
+  WHERE coalesce(node.officialEffectiveDate, '') = ''
+     OR node.officialEffectiveDate <= $as_of_date
+  WITH collect({node: node, score: score})[0..$candidate_k] AS rows, max(score) AS max_score
   UNWIND rows AS row
   RETURN row.node AS node,
          CASE WHEN max_score IS NULL OR max_score = 0 THEN 0.0 ELSE row.score / max_score END AS score
