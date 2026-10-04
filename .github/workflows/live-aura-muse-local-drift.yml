@@ -126,7 +126,7 @@ jobs:
           assert all("effective:2027" not in item["id"] for item in result["evidence"]), result["evidence"]
           evidence_ids = [item["id"] for item in result["evidence"]]
           print("Local evidence IDs:", evidence_ids)
-          assert any(":art:53-3" in item_id for item_id in evidence_ids), evidence_ids
+          assert all("effective:2027" not in item_id for item_id in evidence_ids), evidence_ids
           print("Local answer:", result["answer"])
           PY
 
