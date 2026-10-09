@@ -36,7 +36,7 @@ export OPENCODE_URL="http://127.0.0.1:4096"
 export OPENCODE_PROVIDER_ID="opencode"
 export OPENCODE_MODEL_ID="muse-spark-1.3-contributor-free"
 
-python scripts/opencode_openai_shim.py \
+python opencode_muse_gateway/gateway.py \
   --host 127.0.0.1 \
   --port 8000
 ```
@@ -82,3 +82,17 @@ GraphRAG
 A sandbox without outbound network access can still validate the local OpenCode
 server and shim translation using a local provider. A real Muse request additionally
 requires outbound access to the OpenCode Zen API.
+
+
+## Portable folder
+
+The OpenCode/Muse gateway is now self-contained under:
+
+```text
+opencode_muse_gateway/
+```
+
+Copy that directory into another project to reuse the same OpenAI-compatible endpoint.
+See `opencode_muse_gateway/README.md` for standalone install/start instructions.
+
+`scripts/opencode_openai_shim.py` remains only as a backward-compatible entry point.
