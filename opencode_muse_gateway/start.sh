@@ -24,7 +24,7 @@ nohup "$OPENCODE_BIN" serve   --hostname "$OPENCODE_HOST"   --port "$OPENCODE_PO
 echo $! > "$RUN_DIR/opencode.pid"
 
 for _ in $(seq 1 60); do
-  if curl -fsS "http://$OPENCODE_HOST:$OPENCODE_PORT/global/health" >/dev/null; then
+  if curl --max-time 2 -fsS "http://$OPENCODE_HOST:$OPENCODE_PORT/global/health" >/dev/null; then
     break
   fi
   sleep 1
@@ -35,7 +35,7 @@ nohup python "$ROOT/gateway.py"   --host "$SHIM_HOST"   --port "$SHIM_PORT"   --
 echo $! > "$RUN_DIR/shim.pid"
 
 for _ in $(seq 1 60); do
-  if curl -fsS "http://$SHIM_HOST:$SHIM_PORT/health" >/dev/null; then
+  if curl --max-time 2 -fsS "http://$SHIM_HOST:$SHIM_PORT/health" >/dev/null; then
     echo "OpenAI-compatible endpoint: http://$SHIM_HOST:$SHIM_PORT/v1"
     echo "Model: $OPENCODE_MODEL_ID"
     exit 0
