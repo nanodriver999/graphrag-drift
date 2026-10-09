@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/live-opencode-muse-smoke.yml"
       - "scripts/opencode_openai_shim.py"
+      - "opencode_muse_gateway/**"
       - "src/graphrag_drift/openai_compatible.py"
   workflow_dispatch:
 
@@ -45,7 +46,7 @@ jobs:
           echo $! > "$RUNNER_TEMP/opencode.pid"
 
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4096/global/health >/dev/null; then
+            if curl --max-time 2 -fsS http://127.0.0.1:4096/global/health >/dev/null; then
               exit 0
             fi
             sleep 1
@@ -83,11 +84,11 @@ jobs:
           OPENCODE_REQUEST_TIMEOUT: "180"
         run: |
           set -euo pipefail
-          nohup python scripts/opencode_openai_shim.py             --host 127.0.0.1             --port 8000             > "$RUNNER_TEMP/opencode-shim.log" 2>&1 &
+          nohup python opencode_muse_gateway/gateway.py             --host 127.0.0.1             --port 8000             > "$RUNNER_TEMP/opencode-shim.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/opencode-shim.pid"
 
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+            if curl --max-time 2 -fsS http://127.0.0.1:8000/health >/dev/null; then
               exit 0
             fi
             sleep 1
