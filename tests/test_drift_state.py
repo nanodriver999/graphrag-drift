@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import Barrier, get_ident
 
 from graphrag_drift.core import GraphRAGEngine
 from graphrag_drift.drift_state import DriftAction, DriftQueryState
@@ -128,3 +129,66 @@ def test_drift_can_disable_community_context_for_followup_actions() -> None:
 
     assert retriever.community_calls == ["root question"]
     assert reasoner.action_context_ids["q1"] == ["hit:q1"]
+
+
+class ParallelReasoner(DeterministicReasoner):
+    def __init__(self) -> None:
+        self.barrier = Barrier(2, timeout=2)
+        self.thread_ids: set[int] = set()
+
+    def prime_drift(
+        self,
+        query: str,
+        reports: list[CommunityReport],
+    ) -> DriftPrimerResult:
+        return DriftPrimerResult("primer", 90, ["q1", "q2"])
+
+    def answer_drift_action(
+        self,
+        global_query: str,
+        action_query: str,
+        hits: list[SearchHit],
+        *,
+        depth: int,
+    ) -> DriftActionResult:
+        self.thread_ids.add(get_ident())
+        self.barrier.wait()
+        return DriftActionResult(f"{action_query} answer", 80, [])
+
+
+def test_drift_executes_same_epoch_actions_concurrently() -> None:
+    retriever = RecordingRetriever()
+    reasoner = ParallelReasoner()
+    engine = GraphRAGEngine(retriever=retriever, reasoner=reasoner)
+
+    result = engine.drift(
+        "root question",
+        top_k=1,
+        max_depth=1,
+        max_actions_per_depth=2,
+        community_top_k=0,
+        action_concurrency=2,
+    )
+
+    assert result["completed_action_count"] == 3
+    assert result["epochs"] == 1
+    assert result["action_concurrency"] == 2
+    assert len(reasoner.thread_ids) == 2
+
+
+def test_drift_action_concurrency_one_preserves_sequential_mode() -> None:
+    retriever = RecordingRetriever()
+    reasoner = ScriptedReasoner()
+    engine = GraphRAGEngine(retriever=retriever, reasoner=reasoner)
+
+    result = engine.drift(
+        "root question",
+        top_k=1,
+        max_depth=1,
+        max_actions_per_depth=2,
+        community_top_k=0,
+        action_concurrency=1,
+    )
+
+    assert result["action_concurrency"] == 1
+    assert result["completed_action_count"] == 3

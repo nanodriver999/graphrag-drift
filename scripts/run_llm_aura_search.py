@@ -45,6 +45,12 @@ def main() -> None:
         default=1,
         help="Community Reports mixed into each DRIFT follow-up action.",
     )
+    parser.add_argument(
+        "--action-concurrency",
+        type=int,
+        default=4,
+        help="Maximum number of DRIFT follow-up actions executed concurrently.",
+    )
     parser.add_argument("--no-query-expansion", action="store_true")
     args = parser.parse_args()
 
@@ -71,6 +77,7 @@ def main() -> None:
                 top_k=args.top_k,
                 max_depth=args.max_depth,
                 community_top_k=args.community_top_k,
+                action_concurrency=args.action_concurrency,
             )
 
         serializable = dict(result)
