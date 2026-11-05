@@ -73,6 +73,10 @@ class GraphRAGModeBenchmark:
             metrics["primer_source"] = str(result.get("primer_source") or "")
             metrics["primer_score"] = int(result.get("primer_score", 0))
             metrics["primer_report_count"] = len(result.get("primer_report_ids", []))
+            metrics["action_count"] = int(result.get("action_count", 0))
+            metrics["completed_action_count"] = int(result.get("completed_action_count", 0))
+            metrics["frontier_count"] = int(result.get("frontier_count", 0))
+            metrics["epochs"] = int(result.get("epochs", 0))
         return metrics
 
     def _run(self, mode: str, fn) -> dict[str, Any]:

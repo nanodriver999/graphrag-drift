@@ -22,3 +22,10 @@ class DriftPrimerResult:
     intermediate_answer: str
     score: int
     follow_up_queries: list[str]
+
+
+@dataclass(frozen=True)
+class DriftActionResult:
+    response: str
+    score: int
+    follow_up_queries: list[str]

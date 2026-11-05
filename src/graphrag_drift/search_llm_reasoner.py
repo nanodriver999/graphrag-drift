@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 
 from .global_llm_reasoner import GlobalLLMReasoner
-from .models import CommunityReport, DriftPrimerResult, SearchHit
+from .models import CommunityReport, DriftActionResult, DriftPrimerResult, SearchHit
 
 
 def _format_evidence(evidence: list[SearchHit], *, limit: int = 20) -> str:
@@ -110,6 +110,71 @@ class GraphRAGLLMReasoner(GlobalLLMReasoner):
 
         return DriftPrimerResult(
             intermediate_answer=answer.strip(),
+            score=score,
+            follow_up_queries=followups,
+        )
+
+    def answer_drift_action(
+        self,
+        global_query: str,
+        action_query: str,
+        hits: list[SearchHit],
+        *,
+        depth: int,
+    ) -> DriftActionResult:
+        if not hits:
+            return DriftActionResult("", 0, [])
+
+        prompt = (
+            "You are executing one DRIFT GraphRAG follow-up action.\n"
+            "Answer the action query using only the supplied Local Search evidence.\n"
+            "Score how useful this answer is for resolving the original global query.\n"
+            "Return ONLY a JSON object with keys response, score, follow_up_queries. "
+            "score must be an integer from 0 to 100. "
+            f"follow_up_queries must contain at most {self.max_followups} short strings.\n\n"
+            f"Original global query:\n{global_query}\n\n"
+            f"Action query:\n{action_query}\n\n"
+            f"Local evidence:\n{_format_evidence(hits)}\n"
+        )
+        raw = self.generator.generate(prompt).strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            best = max(hits, key=lambda hit: hit.score)
+            return DriftActionResult(
+                response=best.text.strip(),
+                score=max(0, min(100, round(best.score * 100))),
+                follow_up_queries=[],
+            )
+
+        if not isinstance(payload, dict):
+            payload = {}
+
+        response = payload.get("response")
+        if not isinstance(response, str) or not response.strip():
+            response = max(hits, key=lambda hit: hit.score).text
+
+        score = payload.get("score", 0)
+        if not isinstance(score, int):
+            try:
+                score = int(score)
+            except (TypeError, ValueError):
+                score = 0
+        score = max(0, min(100, score))
+
+        raw_followups = payload.get("follow_up_queries", [])
+        followups: list[str] = []
+        if isinstance(raw_followups, list):
+            for item in raw_followups:
+                if isinstance(item, str):
+                    item = item.strip()
+                    if item and item not in followups:
+                        followups.append(item)
+                if len(followups) >= self.max_followups:
+                    break
+
+        return DriftActionResult(
+            response=response.strip(),
             score=score,
             follow_up_queries=followups,
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .drift_state import DriftAction, DriftQueryState
 from .llm import DeterministicReasoner, Reasoner
 from .models import SearchHit
 from .retrieval import Retriever
@@ -98,17 +99,103 @@ class GraphRAGEngine:
         assert self.reasoner is not None
         return self.reasoner.reduce_drift(query, evidence)
 
-    def drift(self, query: str, *, top_k: int = 5, max_depth: int = 2) -> dict:
-        state = self.drift_primer(query, top_k=top_k)
-        while state["followups"] and state["depth"] < max_depth:
-            expanded = self.drift_expand(
-                query,
-                evidence=state["evidence"],
-                followups=state["followups"],
-                depth=state["depth"],
-                top_k=top_k,
-            )
-            state = {**state, **expanded}
+    def drift(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        max_depth: int = 2,
+        max_actions_per_depth: int = 2,
+    ) -> dict:
+        assert self.reasoner is not None
+        primer_state = self.drift_primer(query, top_k=top_k)
+        evidence = list(primer_state["evidence"])
+        query_state = DriftQueryState()
 
-        state["answer"] = self.drift_reduce(query, state["evidence"])
-        return state
+        primer_answer = str(primer_state.get("primer_answer") or "")
+        primer_score = int(primer_state.get("primer_score", 0))
+        primer_source = str(primer_state.get("primer_source") or "")
+
+        if primer_source == "community":
+            root = DriftAction(
+                query=query,
+                depth=0,
+                priority=float(primer_score),
+                answer=primer_answer,
+                score=float(primer_score),
+                follow_ups=list(primer_state.get("followups", [])),
+            )
+            query_state.add_action(root)
+            query_state.add_followups(
+                root.query,
+                root.follow_ups,
+                depth=1,
+                priority=float(primer_score),
+            )
+        else:
+            fallback_priority = max(
+                (hit.score for hit in evidence),
+                default=0.0,
+            ) * 100.0
+            query_state.add_followups(
+                None,
+                list(primer_state.get("followups", [])),
+                depth=1,
+                priority=fallback_priority,
+            )
+
+        epochs = 0
+        while epochs < max_depth:
+            frontier = query_state.rank_incomplete_actions()
+            if not frontier:
+                break
+
+            actions = frontier[: max(1, max_actions_per_depth)]
+            for action in actions:
+                hits = self.retriever.local_search(action.query, top_k=top_k)
+                action_result = self.reasoner.answer_drift_action(
+                    query,
+                    action.query,
+                    hits,
+                    depth=action.depth,
+                )
+                completed = query_state.complete_action(
+                    action.query,
+                    action_result,
+                    hits,
+                )
+
+                evidence.extend(hits)
+                if completed.answer:
+                    evidence.append(
+                        SearchHit(
+                            id=f"drift-action:{completed.query}",
+                            text=completed.answer,
+                            score=(completed.score or 0.0) / 100.0,
+                        )
+                    )
+
+                if action.depth < max_depth and action_result.follow_up_queries:
+                    query_state.add_followups(
+                        action.query,
+                        action_result.follow_up_queries,
+                        depth=action.depth + 1,
+                        priority=float(action_result.score),
+                    )
+
+            epochs += 1
+
+        remaining = query_state.rank_incomplete_actions()
+        result = {
+            **primer_state,
+            "depth": query_state.max_completed_depth(),
+            "evidence": evidence,
+            "followups": [action.query for action in remaining],
+            "actions": query_state.serialize(),
+            "action_count": len(query_state.actions),
+            "completed_action_count": len(query_state.completed_actions()),
+            "frontier_count": len(remaining),
+            "epochs": epochs,
+        }
+        result["answer"] = self.drift_reduce(query, evidence)
+        return result

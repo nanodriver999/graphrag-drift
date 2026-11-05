@@ -124,3 +124,47 @@ def test_drift_primer_falls_back_to_best_report_on_invalid_json() -> None:
     assert primer.intermediate_answer == "best report"
     assert primer.score == 90
     assert primer.follow_up_queries == []
+
+
+def test_drift_action_reasoning_parses_score_and_followups() -> None:
+    generator = FakeGenerator(
+        responses=[
+            '{"response":"Focused answer","score":76,"follow_up_queries":["next 1","next 2","next 3"]}'
+        ]
+    )
+    reasoner = GraphRAGLLMReasoner(generator=generator, max_followups=2)
+    hits = [SearchHit("e1", "Local evidence", 0.8)]
+
+    result = reasoner.answer_drift_action(
+        "global question",
+        "focused question",
+        hits,
+        depth=1,
+    )
+
+    assert result.response == "Focused answer"
+    assert result.score == 76
+    assert result.follow_up_queries == ["next 1", "next 2"]
+    prompt = generator.prompts[0]
+    assert "Original global query" in prompt
+    assert "focused question" in prompt
+
+
+def test_drift_action_reasoning_falls_back_to_best_hit_on_invalid_json() -> None:
+    generator = FakeGenerator(responses=["not json"])
+    reasoner = GraphRAGLLMReasoner(generator=generator)
+    hits = [
+        SearchHit("e1", "lower", 0.2),
+        SearchHit("e2", "best evidence", 0.9),
+    ]
+
+    result = reasoner.answer_drift_action(
+        "global",
+        "action",
+        hits,
+        depth=1,
+    )
+
+    assert result.response == "best evidence"
+    assert result.score == 90
+    assert result.follow_up_queries == []
