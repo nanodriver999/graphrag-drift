@@ -47,6 +47,12 @@ def main() -> None:
         help="Proportion of Local top-k reserved for Community Reports.",
     )
     parser.add_argument(
+        "--local-text-unit-prop",
+        type=float,
+        default=0.50,
+        help="Proportion of Local top-k reserved for Chunk/text-unit evidence.",
+    )
+    parser.add_argument(
         "--community-top-k",
         type=int,
         default=1,
@@ -84,6 +90,7 @@ def main() -> None:
             mixed_local = MixedLocalContextRetriever(
                 retriever=base_retriever,
                 community_prop=args.local_community_prop,
+                text_unit_prop=args.local_text_unit_prop,
             )
             retriever = mixed_local
             if not args.no_query_expansion:
