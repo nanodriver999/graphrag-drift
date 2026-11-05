@@ -111,3 +111,47 @@ class DriftQueryState:
                 for source, target, weight in self.edges
             ],
         }
+
+    def serialize_hierarchy(self) -> list[dict]:
+        """Serialize the primary parent relation as a deterministic action tree.
+
+        Query de-duplication can create additional graph edges to an already-known
+        action. The hierarchy intentionally follows each action's first parent_query;
+        the complete many-parent structure remains available through serialize().
+        """
+
+        children: dict[str | None, list[DriftAction]] = {}
+        for action in self.actions.values():
+            parent = action.parent_query
+            if parent is not None and parent not in self.actions:
+                parent = None
+            children.setdefault(parent, []).append(action)
+
+        def ordered(rows: list[DriftAction]) -> list[DriftAction]:
+            return sorted(
+                rows,
+                key=lambda action: (
+                    action.depth,
+                    -action.priority,
+                    action.query,
+                ),
+            )
+
+        def build(action: DriftAction, lineage: frozenset[str]) -> dict:
+            node = action.serialize()
+            if action.query in lineage:
+                node["children"] = []
+                node["cycle_truncated"] = True
+                return node
+
+            next_lineage = lineage | {action.query}
+            node["children"] = [
+                build(child, next_lineage)
+                for child in ordered(children.get(action.query, []))
+            ]
+            return node
+
+        return [
+            build(root, frozenset())
+            for root in ordered(children.get(None, []))
+        ]

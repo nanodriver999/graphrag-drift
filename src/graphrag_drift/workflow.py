@@ -33,6 +33,7 @@ class GraphRAGState(TypedDict, total=False):
     primer_fold_count: int
     primer_source: str
     actions: dict[str, Any]
+    hierarchy: list[dict[str, Any]]
     action_count: int
     completed_action_count: int
     frontier_count: int

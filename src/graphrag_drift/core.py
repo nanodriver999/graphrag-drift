@@ -352,6 +352,7 @@ class GraphRAGEngine:
             "evidence": evidence,
             "followups": [action.query for action in remaining],
             "actions": query_state.serialize(),
+            "hierarchy": query_state.serialize_hierarchy(),
             "action_count": len(query_state.actions),
             "completed_action_count": len(query_state.completed_actions()),
             "frontier_count": len(remaining),

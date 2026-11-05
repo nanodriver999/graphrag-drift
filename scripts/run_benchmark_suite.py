@@ -49,6 +49,11 @@ def main() -> None:
     parser.add_argument("--global-top-k", type=int, default=3)
     parser.add_argument("--drift-top-k", type=int, default=2)
     parser.add_argument("--drift-max-depth", type=int, default=2)
+    parser.add_argument("--drift-max-actions-per-depth", type=int, default=2)
+    parser.add_argument("--drift-community-top-k", type=int, default=1)
+    parser.add_argument("--drift-action-concurrency", type=int, default=4)
+    parser.add_argument("--drift-primer-folds", type=int, default=5)
+    parser.add_argument("--drift-primer-concurrency", type=int, default=5)
     args = parser.parse_args()
 
     cases = load_benchmark_cases(args.cases)
@@ -77,6 +82,11 @@ def main() -> None:
                 global_top_k=args.global_top_k,
                 drift_top_k=args.drift_top_k,
                 drift_max_depth=args.drift_max_depth,
+                drift_max_actions_per_depth=args.drift_max_actions_per_depth,
+                drift_community_top_k=args.drift_community_top_k,
+                drift_action_concurrency=args.drift_action_concurrency,
+                drift_primer_folds=args.drift_primer_folds,
+                drift_primer_concurrency=args.drift_primer_concurrency,
             )
 
         result = run_benchmark_suite(cases, runner)
