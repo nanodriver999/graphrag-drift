@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from .drift_state import DriftAction, DriftQueryState
 from .llm import DeterministicReasoner, Reasoner
-from .models import SearchHit
+from .models import DriftActionResult, SearchHit
 from .retrieval import Retriever
 
 
@@ -137,7 +137,7 @@ class GraphRAGEngine:
         *,
         top_k: int,
         community_top_k: int,
-    ) -> tuple[DriftAction, object, list[SearchHit]]:
+    ) -> tuple[DriftAction, DriftActionResult, list[SearchHit]]:
         assert self.reasoner is not None
         hits = self._drift_mixed_context(
             action.query,
