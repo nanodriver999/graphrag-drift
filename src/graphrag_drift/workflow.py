@@ -22,6 +22,10 @@ class GraphRAGState(TypedDict, total=False):
     followups: list[str]
     evidence: list[SearchHit]
     partials: list[tuple[str, float]]
+    primer_answer: str
+    primer_score: int
+    primer_report_ids: list[str]
+    primer_source: str
     answer: str
 
 
