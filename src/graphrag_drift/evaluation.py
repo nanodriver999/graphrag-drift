@@ -99,6 +99,7 @@ class GraphRAGModeBenchmark:
         query: str,
         *,
         local_top_k: int = 5,
+        local_community_prop: float = 0.25,
         global_top_k: int = 5,
         drift_top_k: int = 5,
         drift_max_depth: int = 2,
@@ -136,6 +137,7 @@ class GraphRAGModeBenchmark:
             "query": query,
             "settings": {
                 "local_top_k": local_top_k,
+                "local_community_prop": local_community_prop,
                 "global_top_k": global_top_k,
                 "drift_top_k": drift_top_k,
                 "drift_max_depth": drift_max_depth,
