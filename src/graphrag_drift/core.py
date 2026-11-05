@@ -26,12 +26,55 @@ class GraphRAGEngine:
             "answer": self.reasoner.answer_local(query, hits),
         }
 
+    @staticmethod
+    def _select_global_reduce_partials(
+        partials: list[tuple[str, float]],
+        *,
+        char_budget: int,
+    ) -> list[tuple[str, float]]:
+        if char_budget < 1:
+            raise ValueError("reduce_char_budget must be >= 1")
+
+        useful = [
+            (text.strip(), score)
+            for text, score in sorted(
+                partials,
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            if score > 0
+            and text.strip()
+            and text.strip() != "NOT_RELEVANT"
+        ]
+
+        selected: list[tuple[str, float]] = []
+        used = 0
+        for text, score in useful:
+            remaining = char_budget - used
+            if remaining <= 0:
+                break
+
+            if len(text) <= remaining:
+                selected.append((text, score))
+                used += len(text)
+                continue
+
+            if not selected:
+                suffix = "..." if remaining >= 3 else ""
+                keep = max(0, remaining - len(suffix))
+                selected.append((text[:keep] + suffix, score))
+                used = char_budget
+            break
+
+        return selected
+
     def global_search(
         self,
         query: str,
         *,
         top_k: int = 5,
         map_concurrency: int = 4,
+        reduce_char_budget: int = 24000,
     ) -> dict:
         assert self.reasoner is not None
         reports = self.retriever.community_reports(query, top_k=top_k)
@@ -57,10 +100,17 @@ class GraphRAGEngine:
                     # Consume in report order to keep reduce input deterministic.
                     partials = [future.result() for future in futures]
 
+        reduce_partials = self._select_global_reduce_partials(
+            partials,
+            char_budget=reduce_char_budget,
+        )
         return {
             "partials": partials,
             "map_concurrency": max(1, map_concurrency),
-            "answer": self.reasoner.reduce_global(query, partials),
+            "reduce_char_budget": reduce_char_budget,
+            "reduce_partial_count": len(reduce_partials),
+            "reduce_char_count": sum(len(text) for text, _score in reduce_partials),
+            "answer": self.reasoner.reduce_global(query, reduce_partials),
         }
 
     @staticmethod
