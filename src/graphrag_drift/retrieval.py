@@ -42,44 +42,92 @@ class InMemoryRetriever:
 
 @dataclass
 class MixedLocalContextRetriever:
-    """Reserve part of Local Search context for Community Reports.
-
-    The wrapped retriever continues to own entity/relationship/text-unit ranking.
-    This adapter only enforces a stable context quota so scores from different
-    source families do not have to be calibrated against each other.
-    """
+    """Compose Local Search context from entity/relationship, text-unit, and community sources."""
 
     retriever: Retriever
     community_prop: float = 0.25
+    text_unit_prop: float = 0.50
+    candidate_multiplier: int = 4
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.community_prop < 1.0:
             raise ValueError("community_prop must satisfy 0 <= community_prop < 1")
+        if not 0.0 <= self.text_unit_prop < 1.0:
+            raise ValueError("text_unit_prop must satisfy 0 <= text_unit_prop < 1")
+        if self.community_prop + self.text_unit_prop > 1.0:
+            raise ValueError("community_prop + text_unit_prop must not exceed 1")
+        if self.candidate_multiplier < 1:
+            raise ValueError("candidate_multiplier must be >= 1")
 
-    def _allocation(self, top_k: int) -> tuple[int, int]:
+    def _allocation(self, top_k: int) -> dict[str, int]:
         if top_k <= 0:
-            return (0, 0)
-        if self.community_prop <= 0.0 or top_k == 1:
-            return (top_k, 0)
+            return {"entity": 0, "text_unit": 0, "community": 0}
 
-        community_k = max(1, round(top_k * self.community_prop))
-        community_k = min(community_k, top_k - 1)
-        return (top_k - community_k, community_k)
+        proportions = {
+            "entity": 1.0 - self.community_prop - self.text_unit_prop,
+            "text_unit": self.text_unit_prop,
+            "community": self.community_prop,
+        }
+        counts = {
+            name: int(top_k * proportion)
+            for name, proportion in proportions.items()
+        }
+        remaining = top_k - sum(counts.values())
+        order = sorted(
+            proportions,
+            key=lambda name: (
+                -(top_k * proportions[name] - counts[name]),
+                {"entity": 0, "community": 1, "text_unit": 2}[name],
+            ),
+        )
+        for name in order[:remaining]:
+            counts[name] += 1
+        return counts
+
+    @staticmethod
+    def _is_text_unit(hit: SearchHit) -> bool:
+        return hit.id.startswith("chunk")
 
     def local_search(self, query: str, *, top_k: int = 5) -> list[SearchHit]:
-        local_k, community_k = self._allocation(top_k)
-        hits = self.retriever.local_search(query, top_k=local_k)
-        if community_k:
-            reports = self.retriever.community_reports(query, top_k=community_k)
-            hits.extend(
-                SearchHit(
-                    id=f"community:{report.id}",
-                    text=report.summary,
-                    score=report.score,
-                )
-                for report in reports
+        allocation = self._allocation(top_k)
+        if top_k <= 0:
+            return []
+
+        candidate_k = max(top_k, top_k * self.candidate_multiplier)
+        candidates = self.retriever.local_search(query, top_k=candidate_k)
+        entity_hits = [hit for hit in candidates if not self._is_text_unit(hit)]
+        text_hits = [hit for hit in candidates if self._is_text_unit(hit)]
+
+        reports = self.retriever.community_reports(
+            query,
+            top_k=allocation["community"],
+        ) if allocation["community"] else []
+        community_hits = [
+            SearchHit(
+                id=f"community:{report.id}",
+                text=report.summary,
+                score=report.score,
             )
-        return hits[:top_k]
+            for report in reports
+        ]
+
+        selected = [
+            *entity_hits[: allocation["entity"]],
+            *text_hits[: allocation["text_unit"]],
+        ]
+        selected_ids = {hit.id for hit in selected}
+
+        local_target = max(0, top_k - len(community_hits))
+        if len(selected) < local_target:
+            for hit in candidates:
+                if hit.id in selected_ids:
+                    continue
+                selected.append(hit)
+                selected_ids.add(hit.id)
+                if len(selected) >= local_target:
+                    break
+
+        return [*selected[:local_target], *community_hits][:top_k]
 
     def community_reports(self, query: str, *, top_k: int = 5) -> list[CommunityReport]:
         return self.retriever.community_reports(query, top_k=top_k)

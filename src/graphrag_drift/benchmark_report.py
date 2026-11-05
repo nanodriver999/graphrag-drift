@@ -32,6 +32,7 @@ def render_benchmark_markdown(result: dict[str, Any]) -> str:
         "",
         f"- Local top-k: {settings.get('local_top_k', '-')}",
         f"- Local community proportion: {settings.get('local_community_prop', '-')}",
+        f"- Local text-unit proportion: {settings.get('local_text_unit_prop', '-')}",
         f"- Global top-k: {settings.get('global_top_k', '-')}",
         f"- DRIFT top-k: {settings.get('drift_top_k', '-')}",
         f"- DRIFT max depth: {settings.get('drift_max_depth', '-')}",
