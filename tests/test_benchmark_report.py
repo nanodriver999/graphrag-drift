@@ -52,7 +52,7 @@ def test_render_benchmark_markdown_includes_summary_and_answers() -> None:
     rendered = render_benchmark_markdown(result)
 
     assert "# GraphRAG Benchmark Summary" in rendered
-    assert "| drift | 30.0 | 4.0 | 5.0 | 1.0 | 0.0 | 3.0 | 2.0 |" in rendered
+    assert "| drift | 30.0 | 4.0 | 5.0 | 1.0 | 0.0 | - | 3.0 | 2.0 |" in rendered
     assert "### q1" in rendered
     assert "answer text" in rendered
 
