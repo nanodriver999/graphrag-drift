@@ -7,7 +7,7 @@ from .cached_retrieval import CachedCommunityReportRetriever
 from .community_report_store import FileCommunityReportStore
 from .core import GraphRAGEngine
 from .models import CommunityReport, SearchHit
-from .retrieval import InMemoryRetriever, Retriever
+from .retrieval import InMemoryRetriever, MixedLocalContextRetriever, Retriever
 
 __all__ = [
     "CachedCommunityReportRetriever",
@@ -18,6 +18,7 @@ __all__ = [
     "GraphRAGEngine",
     "GraphRAGLLMReasoner",
     "LLMQueryExpandingRetriever",
+    "MixedLocalContextRetriever",
     "build_llm_cached_global_search_engine",
     "SearchHit",
     "TextGenerator",
