@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from graphrag_drift.models import SearchHit
+from graphrag_drift.models import CommunityReport, SearchHit
 from graphrag_drift.search_llm_reasoner import GraphRAGLLMReasoner
 
 
@@ -87,3 +87,40 @@ def test_drift_reduce_deduplicates_evidence_in_prompt() -> None:
     prompt = generator.prompts[0]
     assert prompt.count("[e1]") == 1
     assert prompt.count("[e2]") == 1
+
+
+def test_drift_primer_uses_community_reports_and_parses_structured_result() -> None:
+    generator = FakeGenerator(
+        responses=[
+            '{"intermediate_answer":"Broad answer","score":82,"follow_up_queries":["q1","q2","q3"]}'
+        ]
+    )
+    reasoner = GraphRAGLLMReasoner(generator=generator, max_followups=2)
+    reports = [
+        CommunityReport("c1", "Community summary one", 0.9),
+        CommunityReport("c2", "Community summary two", 0.8),
+    ]
+
+    primer = reasoner.prime_drift("Explain topic", reports)
+
+    assert primer.intermediate_answer == "Broad answer"
+    assert primer.score == 82
+    assert primer.follow_up_queries == ["q1", "q2"]
+    prompt = generator.prompts[0]
+    assert "primer phase of DRIFT GraphRAG" in prompt
+    assert "Community summary one" in prompt
+
+
+def test_drift_primer_falls_back_to_best_report_on_invalid_json() -> None:
+    generator = FakeGenerator(responses=["not json"])
+    reasoner = GraphRAGLLMReasoner(generator=generator)
+    reports = [
+        CommunityReport("c1", "lower", 0.2),
+        CommunityReport("c2", "best report", 0.9),
+    ]
+
+    primer = reasoner.prime_drift("q", reports)
+
+    assert primer.intermediate_answer == "best report"
+    assert primer.score == 90
+    assert primer.follow_up_queries == []
