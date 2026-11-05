@@ -18,6 +18,16 @@ on:
         required: true
         default: "2"
         type: string
+      baseline_path:
+        description: "Optional benchmark baseline JSON path in the repository"
+        required: false
+        default: ""
+        type: string
+      fail_on_regression:
+        description: "Fail when configured regression thresholds are exceeded"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -180,6 +190,51 @@ jobs:
 
           cat "$RUNNER_TEMP/graphrag-benchmark.md" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Compare benchmark with baseline
+        if: steps.aura.outputs.available == 'true' && inputs.baseline_path != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="${{ inputs.baseline_path }}"
+          if [ ! -f "$baseline" ]; then
+            echo "Baseline file does not exist: $baseline" >&2
+            exit 1
+          fi
+
+          args=(
+            "$baseline"
+            "$RUNNER_TEMP/graphrag-benchmark.json"
+            --output "$RUNNER_TEMP/graphrag-regression.json"
+          )
+          if [ "${{ inputs.fail_on_regression }}" = "true" ]; then
+            args+=(--fail-on-regression)
+          fi
+
+          set +e
+          python scripts/compare_benchmark.py "${args[@]}"
+          status=$?
+          set -e
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "graphrag-regression.json"
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+              out.write("\n## Benchmark regression comparison\n\n")
+              out.write(f"Status: **{payload['status']}**  \n")
+              out.write(f"Regressions: **{payload['regression_count']}**\n\n")
+              for row in payload.get("regressions", []):
+                  out.write(
+                      f"- {row['mode']} / {row['metric']}: "
+                      f"baseline={row['baseline']}, current={row['current']}\n"
+                  )
+          PY
+
+          exit "$status"
+
       - name: Upload benchmark artifacts
         if: steps.aura.outputs.available == 'true'
         uses: actions/upload-artifact@v4
@@ -188,6 +243,8 @@ jobs:
           path: |
             ${{ runner.temp }}/graphrag-benchmark.json
             ${{ runner.temp }}/graphrag-benchmark.md
+            ${{ runner.temp }}/graphrag-regression.json
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Diagnostics
