@@ -46,6 +46,7 @@ def main() -> None:
     parser.add_argument("--local-text-unit-prop", type=float, default=0.50)
     parser.add_argument("--global-top-k", type=int, default=3)
     parser.add_argument("--global-map-concurrency", type=int, default=4)
+    parser.add_argument("--global-reduce-char-budget", type=int, default=24000)
     parser.add_argument("--drift-top-k", type=int, default=2)
     parser.add_argument(
         "--drift-profile",
@@ -112,6 +113,7 @@ def main() -> None:
             local_text_unit_prop=args.local_text_unit_prop,
             global_top_k=args.global_top_k,
             global_map_concurrency=args.global_map_concurrency,
+            global_reduce_char_budget=args.global_reduce_char_budget,
             drift_top_k=args.drift_top_k,
             drift_profile=drift_profile.name,
             drift_max_followups=drift_profile.max_followups,
