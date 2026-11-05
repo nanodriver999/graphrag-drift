@@ -6,11 +6,13 @@ import os
 from dataclasses import asdict
 
 from graphrag_drift import (
+    DRIFT_SEARCH_PROFILES,
     GraphRAGEngine,
     GraphRAGLLMReasoner,
     LLMQueryExpandingRetriever,
     MixedLocalContextRetriever,
     OpenAICompatibleTextGenerator,
+    resolve_drift_search_profile,
 )
 from graphrag_drift.config import Neo4jSettings
 from graphrag_drift.neo4j_graphrag_retrieval import Neo4jGraphRAGRetriever
@@ -39,7 +41,14 @@ def main() -> None:
     parser.add_argument("mode", choices=["local", "drift"])
     parser.add_argument("query")
     parser.add_argument("--top-k", type=int, default=3)
-    parser.add_argument("--max-depth", type=int, default=2)
+    parser.add_argument(
+        "--drift-profile",
+        choices=sorted(DRIFT_SEARCH_PROFILES),
+        default="economy",
+        help="Named DRIFT search-budget preset.",
+    )
+    parser.add_argument("--max-depth", type=int, default=None)
+    parser.add_argument("--max-actions-per-depth", type=int, default=None)
     parser.add_argument(
         "--local-community-prop",
         type=float,
@@ -55,26 +64,32 @@ def main() -> None:
     parser.add_argument(
         "--community-top-k",
         type=int,
-        default=1,
+        default=None,
         help="Community Reports mixed into each DRIFT follow-up action.",
     )
     parser.add_argument(
         "--action-concurrency",
         type=int,
-        default=4,
+        default=None,
         help="Maximum number of DRIFT follow-up actions executed concurrently.",
     )
     parser.add_argument(
         "--primer-folds",
         type=int,
-        default=5,
+        default=None,
         help="Number of folds used to prime DRIFT from Community Reports.",
     )
     parser.add_argument(
         "--primer-concurrency",
         type=int,
-        default=5,
+        default=None,
         help="Maximum number of DRIFT primer folds executed concurrently.",
+    )
+    parser.add_argument(
+        "--max-followups",
+        type=int,
+        default=None,
+        help="Maximum follow-up queries generated per DRIFT action.",
     )
     parser.add_argument("--no-query-expansion", action="store_true")
     args = parser.parse_args()
@@ -82,7 +97,20 @@ def main() -> None:
     base_retriever = Neo4jGraphRAGRetriever.from_settings(Neo4jSettings.from_env())
     try:
         generator = _generator_from_env()
-        reasoner = GraphRAGLLMReasoner(generator=generator)
+        drift_profile = resolve_drift_search_profile(
+            args.drift_profile,
+            max_depth=args.max_depth,
+            max_actions_per_depth=args.max_actions_per_depth,
+            community_top_k=args.community_top_k,
+            action_concurrency=args.action_concurrency,
+            primer_folds=args.primer_folds,
+            primer_concurrency=args.primer_concurrency,
+            max_followups=args.max_followups,
+        )
+        reasoner = GraphRAGLLMReasoner(
+            generator=generator,
+            max_followups=drift_profile.max_followups if args.mode == "drift" else 2,
+        )
 
         query_expander = None
         retriever = base_retriever
@@ -107,11 +135,7 @@ def main() -> None:
             result = engine.drift(
                 args.query,
                 top_k=args.top_k,
-                max_depth=args.max_depth,
-                community_top_k=args.community_top_k,
-                action_concurrency=args.action_concurrency,
-                primer_folds=args.primer_folds,
-                primer_concurrency=args.primer_concurrency,
+                **drift_profile.engine_kwargs(),
             )
 
         serializable = dict(result)
@@ -119,6 +143,8 @@ def main() -> None:
             serializable["evidence"] = [asdict(hit) for hit in serializable["evidence"]]
         if query_expander is not None:
             serializable["retrieval_queries"] = query_expander.last_queries
+        if args.mode == "drift":
+            serializable["drift_profile"] = drift_profile.serialize()
         print(json.dumps(serializable, ensure_ascii=False, indent=2))
     finally:
         base_retriever.close()
