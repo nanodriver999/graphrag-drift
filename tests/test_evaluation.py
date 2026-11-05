@@ -69,6 +69,9 @@ def test_mode_benchmark_records_llm_calls_and_evidence() -> None:
     assert rows["global"]["llm_calls"] == 3
     assert rows["global"]["evidence_count"] == 2
     assert rows["global"]["map_concurrency"] == 4
+    assert rows["global"]["reduce_char_budget"] == 24000
+    assert rows["global"]["reduce_partial_count"] == 2
+    assert rows["global"]["reduce_char_count"] > 0
 
     assert rows["drift"]["llm_calls"] == 3
     assert rows["drift"]["depth"] == 1
@@ -112,6 +115,7 @@ def test_mode_benchmark_records_named_drift_profile_settings() -> None:
         local_top_k=1,
         global_top_k=1,
         global_map_concurrency=8,
+        global_reduce_char_budget=12000,
         drift_top_k=1,
         drift_profile="microsoft-like",
         drift_max_followups=20,
@@ -125,6 +129,7 @@ def test_mode_benchmark_records_named_drift_profile_settings() -> None:
 
     settings = result["settings"]
     assert settings["global_map_concurrency"] == 8
+    assert settings["global_reduce_char_budget"] == 12000
     assert settings["drift_profile"] == "microsoft-like"
     assert settings["drift_max_followups"] == 20
     assert settings["drift_max_depth"] == 3

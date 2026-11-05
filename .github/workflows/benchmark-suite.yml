@@ -23,6 +23,11 @@ on:
         required: true
         default: "4"
         type: string
+      global_reduce_char_budget:
+        description: "Maximum characters passed to Global Search reduce"
+        required: true
+        default: "24000"
+        type: string
       as_of_date:
         description: "Legal retrieval date (YYYY-MM-DD)"
         required: true
@@ -242,6 +247,7 @@ jobs:
             --local-community-prop "${{ inputs.local_community_prop }}"
             --local-text-unit-prop "${{ inputs.local_text_unit_prop }}"
             --global-map-concurrency "${{ inputs.global_map_concurrency }}"
+            --global-reduce-char-budget "${{ inputs.global_reduce_char_budget }}"
             --drift-profile "${{ inputs.drift_profile }}"
             --output "$RUNNER_TEMP/graphrag-benchmark.json"
           )
