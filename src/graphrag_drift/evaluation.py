@@ -134,5 +134,16 @@ class GraphRAGModeBenchmark:
         return {
             "format": "graphrag-drift-mode-benchmark-v1",
             "query": query,
+            "settings": {
+                "local_top_k": local_top_k,
+                "global_top_k": global_top_k,
+                "drift_top_k": drift_top_k,
+                "drift_max_depth": drift_max_depth,
+                "drift_max_actions_per_depth": drift_max_actions_per_depth,
+                "drift_community_top_k": drift_community_top_k,
+                "drift_action_concurrency": drift_action_concurrency,
+                "drift_primer_folds": drift_primer_folds,
+                "drift_primer_concurrency": drift_primer_concurrency,
+            },
             "results": rows,
         }
