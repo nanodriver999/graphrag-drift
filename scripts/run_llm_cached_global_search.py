@@ -23,11 +23,16 @@ def main() -> None:
         help="Path to a checkout of nanodriver999/graphrag-drift-data",
     )
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--map-concurrency", type=int, default=4)
     args = parser.parse_args()
 
     settings = GlobalSearchLLMSettings.from_env()
     engine = build_llm_cached_global_search_engine(args.data_repo, settings)
-    result = engine.global_search(args.query, top_k=args.top_k)
+    result = engine.global_search(
+        args.query,
+        top_k=args.top_k,
+        map_concurrency=args.map_concurrency,
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

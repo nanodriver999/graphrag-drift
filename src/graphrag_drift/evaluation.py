@@ -72,6 +72,8 @@ class GraphRAGModeBenchmark:
             "unique_evidence_count": unique_evidence_count,
             "answer": str(result.get("answer") or ""),
         }
+        if mode == "global":
+            metrics["map_concurrency"] = int(result.get("map_concurrency", 1))
         if mode == "drift":
             metrics["depth"] = int(result.get("depth", 0))
             metrics["remaining_followups"] = len(result.get("followups", []))
@@ -102,6 +104,7 @@ class GraphRAGModeBenchmark:
         local_community_prop: float = 0.25,
         local_text_unit_prop: float = 0.50,
         global_top_k: int = 5,
+        global_map_concurrency: int = 4,
         drift_top_k: int = 5,
         drift_profile: str = "economy",
         drift_max_followups: int = 2,
@@ -119,7 +122,11 @@ class GraphRAGModeBenchmark:
             ),
             self._run(
                 "global",
-                lambda: self.global_engine.global_search(query, top_k=global_top_k),
+                lambda: self.global_engine.global_search(
+                    query,
+                    top_k=global_top_k,
+                    map_concurrency=global_map_concurrency,
+                ),
             ),
             self._run(
                 "drift",
@@ -143,6 +150,7 @@ class GraphRAGModeBenchmark:
                 "local_community_prop": local_community_prop,
                 "local_text_unit_prop": local_text_unit_prop,
                 "global_top_k": global_top_k,
+                "global_map_concurrency": global_map_concurrency,
                 "drift_top_k": drift_top_k,
                 "drift_profile": drift_profile,
                 "drift_max_followups": drift_max_followups,

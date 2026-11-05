@@ -26,12 +26,40 @@ class GraphRAGEngine:
             "answer": self.reasoner.answer_local(query, hits),
         }
 
-    def global_search(self, query: str, *, top_k: int = 5) -> dict:
+    def global_search(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        map_concurrency: int = 4,
+    ) -> dict:
         assert self.reasoner is not None
         reports = self.retriever.community_reports(query, top_k=top_k)
-        partials = [self.reasoner.map_community(query, report) for report in reports]
+        if not reports:
+            partials: list[tuple[str, float]] = []
+        else:
+            worker_count = min(max(1, map_concurrency), len(reports))
+            if worker_count == 1:
+                partials = [
+                    self.reasoner.map_community(query, report)
+                    for report in reports
+                ]
+            else:
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    futures = [
+                        executor.submit(
+                            self.reasoner.map_community,
+                            query,
+                            report,
+                        )
+                        for report in reports
+                    ]
+                    # Consume in report order to keep reduce input deterministic.
+                    partials = [future.result() for future in futures]
+
         return {
             "partials": partials,
+            "map_concurrency": max(1, map_concurrency),
             "answer": self.reasoner.reduce_global(query, partials),
         }
 
