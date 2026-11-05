@@ -13,6 +13,11 @@ on:
         required: true
         default: "0.25"
         type: string
+      local_text_unit_prop:
+        description: "Local Search Chunk/text-unit proportion"
+        required: true
+        default: "0.50"
+        type: string
       as_of_date:
         description: "Legal retrieval date (YYYY-MM-DD)"
         required: true
@@ -207,6 +212,7 @@ jobs:
           python scripts/run_benchmark_suite.py \
             --cases "${{ inputs.cases }}" \
             --local-community-prop "${{ inputs.local_community_prop }}" \
+            --local-text-unit-prop "${{ inputs.local_text_unit_prop }}" \
             --drift-max-depth "${{ inputs.drift_max_depth }}" \
             --drift-max-actions-per-depth "${{ inputs.drift_max_actions_per_depth }}" \
             --drift-community-top-k "${{ inputs.drift_community_top_k }}" \
