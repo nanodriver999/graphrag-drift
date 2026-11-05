@@ -73,3 +73,6 @@ def test_mode_benchmark_records_llm_calls_and_evidence() -> None:
     assert rows["drift"]["depth"] == 1
     assert rows["drift"]["evidence_count"] == 2
     assert rows["drift"]["unique_evidence_count"] == 2
+    assert rows["drift"]["primer_source"] == "community"
+    assert rows["drift"]["primer_score"] == 90
+    assert rows["drift"]["primer_report_count"] == 1
