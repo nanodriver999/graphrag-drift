@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from scripts.verify_current_law_regression import verify_current_law_regression
+from graphrag_drift.current_law_regression import verify_current_law_regression
 
 
 def coverage(current: bool) -> dict:
