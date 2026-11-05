@@ -67,6 +67,7 @@ jobs:
           unset NEO4J_AURA_BLOB
           rm -f "$secret_file"
 
+          set +e
           python - <<'PY'
           import os, socket, urllib.parse, sys
           host = urllib.parse.urlparse(os.environ["NEO4J_URI"]).hostname
@@ -77,6 +78,7 @@ jobs:
               sys.exit(42)
           PY
           status=$?
+          set -e
           if [ "$status" -eq 42 ]; then
             exit 0
           elif [ "$status" -ne 0 ]; then
