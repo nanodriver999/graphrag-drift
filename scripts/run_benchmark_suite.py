@@ -9,6 +9,7 @@ from graphrag_drift import (
     GraphRAGEngine,
     GraphRAGLLMReasoner,
     LLMQueryExpandingRetriever,
+    MixedLocalContextRetriever,
     OpenAICompatibleTextGenerator,
 )
 from graphrag_drift.benchmark_suite import load_benchmark_cases, run_benchmark_suite
@@ -46,6 +47,7 @@ def main() -> None:
     )
     parser.add_argument("--output", default=None)
     parser.add_argument("--local-top-k", type=int, default=4)
+    parser.add_argument("--local-community-prop", type=float, default=0.25)
     parser.add_argument("--global-top-k", type=int, default=3)
     parser.add_argument("--drift-top-k", type=int, default=2)
     parser.add_argument("--drift-max-depth", type=int, default=2)
@@ -64,8 +66,12 @@ def main() -> None:
     try:
         generator = _probe()
         reasoner = GraphRAGLLMReasoner(generator=generator)
-        local_retriever = LLMQueryExpandingRetriever(
+        mixed_local = MixedLocalContextRetriever(
             retriever=base,
+            community_prop=args.local_community_prop,
+        )
+        local_retriever = LLMQueryExpandingRetriever(
+            retriever=mixed_local,
             generator=generator,
         )
         benchmark = GraphRAGModeBenchmark(
@@ -79,6 +85,7 @@ def main() -> None:
             return benchmark.run(
                 query,
                 local_top_k=args.local_top_k,
+                local_community_prop=args.local_community_prop,
                 global_top_k=args.global_top_k,
                 drift_top_k=args.drift_top_k,
                 drift_max_depth=args.drift_max_depth,
