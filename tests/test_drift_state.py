@@ -270,3 +270,30 @@ def test_drift_primer_caps_fold_count_to_report_count() -> None:
     )
 
     assert result["primer_fold_count"] == 2
+
+
+def test_query_state_serializes_primary_parent_hierarchy() -> None:
+    state = DriftQueryState()
+    root = state.add_action(
+        DriftAction(
+            query="root",
+            depth=0,
+            priority=90,
+            answer="primer",
+            score=90,
+        )
+    )
+    state.add_followups(root.query, ["q1", "q2"], depth=1, priority=80)
+    state.complete_action(
+        "q1",
+        DriftActionResult("q1 answer", 70, ["q1-child"]),
+        [SearchHit("e1", "evidence", 1.0)],
+    )
+    state.add_followups("q1", ["q1-child"], depth=2, priority=70)
+
+    hierarchy = state.serialize_hierarchy()
+
+    assert len(hierarchy) == 1
+    assert hierarchy[0]["query"] == "root"
+    assert [child["query"] for child in hierarchy[0]["children"]] == ["q1", "q2"]
+    assert hierarchy[0]["children"][0]["children"][0]["query"] == "q1-child"
