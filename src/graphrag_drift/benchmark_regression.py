@@ -43,7 +43,10 @@ def compare_benchmark_summaries(
         cur_wall = _mean(cur, "wall_ms")
         if base_wall is not None and cur_wall is not None:
             ratio = None if base_wall == 0 else (cur_wall - base_wall) / base_wall
-            regressed = ratio is not None and ratio > thresholds.wall_ms_increase_ratio
+            regressed = (
+                ratio is not None
+                and ratio > thresholds.wall_ms_increase_ratio + 1e-9
+            )
             check = {
                 "metric": "wall_ms",
                 "baseline": base_wall,
@@ -60,7 +63,7 @@ def compare_benchmark_summaries(
         cur_calls = _mean(cur, "llm_calls")
         if base_calls is not None and cur_calls is not None:
             delta = cur_calls - base_calls
-            regressed = delta > thresholds.llm_calls_increase
+            regressed = delta > thresholds.llm_calls_increase + 1e-9
             check = {
                 "metric": "llm_calls",
                 "baseline": base_calls,
@@ -77,7 +80,7 @@ def compare_benchmark_summaries(
         cur_coverage = _mean(cur, "topic_coverage")
         if base_coverage is not None and cur_coverage is not None:
             drop = base_coverage - cur_coverage
-            regressed = drop > thresholds.topic_coverage_drop
+            regressed = drop > thresholds.topic_coverage_drop + 1e-9
             check = {
                 "metric": "topic_coverage",
                 "baseline": base_coverage,
@@ -96,7 +99,7 @@ def compare_benchmark_summaries(
             cur_insufficient, (int, float)
         ):
             increase = float(cur_insufficient) - float(base_insufficient)
-            regressed = increase > thresholds.insufficient_rate_increase
+            regressed = increase > thresholds.insufficient_rate_increase + 1e-9
             check = {
                 "metric": "insufficient_answer_rate",
                 "baseline": float(base_insufficient),
