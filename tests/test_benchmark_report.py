@@ -71,6 +71,8 @@ def test_render_benchmark_markdown_includes_drift_settings() -> None:
                         "local_text_unit_prop": 0.50,
                         "global_top_k": 3,
                         "drift_top_k": 2,
+                        "drift_profile": "microsoft-like",
+                        "drift_max_followups": 20,
                         "drift_max_depth": 3,
                         "drift_max_actions_per_depth": 4,
                         "drift_community_top_k": 1,
@@ -88,6 +90,8 @@ def test_render_benchmark_markdown_includes_drift_settings() -> None:
 
     assert "Local community proportion: 0.25" in markdown
     assert "Local text-unit proportion: 0.5" in markdown
+    assert "DRIFT profile: microsoft-like" in markdown
+    assert "DRIFT max follow-ups/action: 20" in markdown
     assert "DRIFT max depth: 3" in markdown
     assert "DRIFT action concurrency: 8" in markdown
     assert "DRIFT primer folds: 5" in markdown
