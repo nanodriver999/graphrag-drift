@@ -21,6 +21,8 @@ class GraphRAGState(TypedDict, total=False):
     max_actions_per_depth: int
     community_top_k: int
     action_concurrency: int
+    primer_folds: int
+    primer_concurrency: int
     depth: int
     followups: list[str]
     evidence: list[SearchHit]
@@ -28,6 +30,7 @@ class GraphRAGState(TypedDict, total=False):
     primer_answer: str
     primer_score: int
     primer_report_ids: list[str]
+    primer_fold_count: int
     primer_source: str
     actions: dict[str, Any]
     action_count: int
@@ -64,6 +67,8 @@ def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
             max_actions_per_depth=state.get("max_actions_per_depth", 2),
             community_top_k=state.get("community_top_k", 1),
             action_concurrency=state.get("action_concurrency", 4),
+            primer_folds=state.get("primer_folds", 5),
+            primer_concurrency=state.get("primer_concurrency", 5),
         )
 
     graph = StateGraph(GraphRAGState)
