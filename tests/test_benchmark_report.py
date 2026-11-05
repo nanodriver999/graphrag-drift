@@ -68,6 +68,7 @@ def test_render_benchmark_markdown_includes_drift_settings() -> None:
                     "settings": {
                         "local_top_k": 4,
                         "local_community_prop": 0.25,
+                        "local_text_unit_prop": 0.50,
                         "global_top_k": 3,
                         "drift_top_k": 2,
                         "drift_max_depth": 3,
@@ -86,6 +87,7 @@ def test_render_benchmark_markdown_includes_drift_settings() -> None:
     markdown = render_benchmark_markdown(result)
 
     assert "Local community proportion: 0.25" in markdown
+    assert "Local text-unit proportion: 0.5" in markdown
     assert "DRIFT max depth: 3" in markdown
     assert "DRIFT action concurrency: 8" in markdown
     assert "DRIFT primer folds: 5" in markdown
