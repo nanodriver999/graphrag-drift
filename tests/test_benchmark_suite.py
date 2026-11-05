@@ -119,3 +119,62 @@ def test_run_benchmark_suite_preserves_case_identity() -> None:
     assert [row["id"] for row in result["cases"]] == ["q1", "q2"]
     assert result["cases"][0]["metadata"]["difficulty"] == "easy"
     assert result["summary"]["case_count"] == 2
+
+
+def test_run_benchmark_suite_adds_quality_metrics() -> None:
+    cases = [
+        BenchmarkCase(
+            "q1",
+            "question",
+            metadata={"expected_topics": ["선임", "신고", "교육"]},
+        )
+    ]
+
+    def runner(query: str) -> dict:
+        return {
+            "query": query,
+            "results": [
+                {
+                    "mode": "local",
+                    "wall_ms": 1,
+                    "llm_calls": 1,
+                    "answer": "선임 후 신고를 해야 한다.",
+                },
+                {
+                    "mode": "drift",
+                    "wall_ms": 2,
+                    "llm_calls": 2,
+                    "answer": "제공된 증거만으로는 확인할 수 없습니다.",
+                },
+            ],
+        }
+
+    result = run_benchmark_suite(cases, runner)
+    local, drift = result["cases"][0]["benchmark"]["results"]
+
+    assert local["matched_topics"] == ["선임", "신고"]
+    assert local["topic_coverage"] == 0.667
+    assert not local["insufficient_answer"]
+
+    assert drift["topic_coverage"] == 0.0
+    assert drift["insufficient_answer"]
+    assert result["summary"]["modes"]["local"]["topic_coverage"]["mean"] == 0.667
+    assert result["summary"]["modes"]["drift"]["insufficient_answer_rate"] == 1.0
+
+
+def test_run_benchmark_suite_rejects_invalid_expected_topics() -> None:
+    cases = [
+        BenchmarkCase(
+            "q1",
+            "question",
+            metadata={"expected_topics": "not-a-list"},
+        )
+    ]
+
+    def runner(query: str) -> dict:
+        return {"query": query, "results": []}
+
+    import pytest
+
+    with pytest.raises(ValueError, match="expected_topics"):
+        run_benchmark_suite(cases, runner)
