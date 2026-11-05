@@ -19,6 +19,7 @@ class GraphRAGState(TypedDict, total=False):
     top_k: int
     max_depth: int
     max_actions_per_depth: int
+    community_top_k: int
     depth: int
     followups: list[str]
     evidence: list[SearchHit]
@@ -60,6 +61,7 @@ def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
             top_k=state.get("top_k", 5),
             max_depth=state.get("max_depth", 2),
             max_actions_per_depth=state.get("max_actions_per_depth", 2),
+            community_top_k=state.get("community_top_k", 1),
         )
 
     graph = StateGraph(GraphRAGState)

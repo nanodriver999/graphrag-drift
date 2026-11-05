@@ -39,6 +39,12 @@ def main() -> None:
     parser.add_argument("query")
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--max-depth", type=int, default=2)
+    parser.add_argument(
+        "--community-top-k",
+        type=int,
+        default=1,
+        help="Community Reports mixed into each DRIFT follow-up action.",
+    )
     parser.add_argument("--no-query-expansion", action="store_true")
     args = parser.parse_args()
 
@@ -64,6 +70,7 @@ def main() -> None:
                 args.query,
                 top_k=args.top_k,
                 max_depth=args.max_depth,
+                community_top_k=args.community_top_k,
             )
 
         serializable = dict(result)

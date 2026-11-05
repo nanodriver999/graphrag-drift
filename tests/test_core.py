@@ -42,7 +42,8 @@ def test_drift_engine_iterates_until_max_depth():
     evidence_ids = [hit.id for hit in out["evidence"]]
     assert evidence_ids[0] == "drift-primer"
     assert sum(item.startswith("drift-action:") for item in evidence_ids) == 2
-    assert len(out["evidence"]) == 5
+    assert len(out["evidence"]) == 7
+    assert sum(item.startswith("community:") for item in evidence_ids) == 2
 
     assert out["action_count"] == 3
     assert out["completed_action_count"] == 3
