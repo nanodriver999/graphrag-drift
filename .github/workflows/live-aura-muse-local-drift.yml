@@ -56,10 +56,42 @@ jobs:
           unset NEO4J_AURA_BLOB
           rm -f "$secret_file"
 
+      - name: Check Aura availability
+        id: aura
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, socket, urllib.parse
+          uri = os.environ["NEO4J_URI"]
+          host = urllib.parse.urlparse(uri).hostname
+          try:
+              socket.getaddrinfo(host, 7687)
+          except OSError as exc:
+              print(f"Aura DNS unavailable: {host}: {exc}")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("available=false\n")
+          else:
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("available=true\n")
+          PY
+
       - name: Build Entity and Chunk retrieval indexes
-        run: python scripts/setup_vector_index.py
+        if: steps.aura.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if python scripts/setup_vector_index.py; then
+              exit 0
+            fi
+            echo "Aura index setup attempt $attempt failed."
+            sleep $((attempt * 5))
+          done
+          exit 1
 
       - name: Report temporal law coverage
+        if: steps.aura.outputs.available == 'true'
         shell: bash
         run: |
           python scripts/check_aura_temporal_coverage.py \
@@ -69,6 +101,7 @@ jobs:
             --law-id 011880 | tee "$RUNNER_TEMP/temporal-coverage.json"
 
       - name: Download pinned OpenCode CLI
+        if: steps.aura.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -80,6 +113,7 @@ jobs:
           ./opencode --version
 
       - name: Start OpenCode server
+        if: steps.aura.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -95,6 +129,7 @@ jobs:
           exit 1
 
       - name: Start OpenAI-compatible shim
+        if: steps.aura.outputs.available == 'true'
         env:
           OPENCODE_URL: http://127.0.0.1:4096
           OPENCODE_PROVIDER_ID: opencode
@@ -115,6 +150,7 @@ jobs:
           exit 1
 
       - name: Run Local Search with Aura and Muse
+        if: steps.aura.outputs.available == 'true'
         env:
           OPENAI_COMPATIBLE_BASE_URL: http://127.0.0.1:8000
           OPENAI_COMPATIBLE_MODEL: muse-spark-1.3-contributor-free
@@ -140,6 +176,7 @@ jobs:
           PY
 
       - name: Verify current-law Local regression when data is available
+        if: steps.aura.outputs.available == 'true'
         shell: bash
         run: |
           python scripts/verify_current_law_regression.py \
@@ -149,6 +186,7 @@ jobs:
             --article-fragment ":art:53-3"
 
       - name: Run DRIFT Search with Aura and Muse
+        if: steps.aura.outputs.available == 'true'
         env:
           OPENAI_COMPATIBLE_BASE_URL: http://127.0.0.1:8000
           OPENAI_COMPATIBLE_MODEL: muse-spark-1.3-contributor-free
