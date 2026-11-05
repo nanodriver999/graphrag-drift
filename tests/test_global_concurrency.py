@@ -25,6 +25,7 @@ class ParallelGlobalReasoner(DeterministicReasoner):
 
 def retriever() -> InMemoryRetriever:
     return InMemoryRetriever(
+        hits=[],
         reports=[
             CommunityReport("c1", "one", 0.9),
             CommunityReport("c2", "two", 0.8),
