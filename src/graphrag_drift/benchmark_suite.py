@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .quality_eval import evaluate_answer_quality
+
 
 @dataclass(frozen=True)
 class BenchmarkCase:
@@ -71,6 +73,7 @@ _NUMERIC_METRICS = (
     "completed_action_count",
     "frontier_count",
     "epochs",
+    "topic_coverage",
 )
 
 
@@ -114,6 +117,13 @@ def summarize_benchmark_runs(runs: Iterable[dict[str, Any]]) -> dict[str, Any]:
             nonempty_answers / len(rows),
             3,
         )
+        insufficient_answers = sum(
+            1 for row in rows if bool(row.get("insufficient_answer"))
+        )
+        metric_summary["insufficient_answer_rate"] = round(
+            insufficient_answers / len(rows),
+            3,
+        )
         aggregate[mode] = metric_summary
 
     return {
@@ -132,6 +142,21 @@ def run_benchmark_suite(
 
     for case in cases:
         result = runner(case.query)
+        expected_topics = case.metadata.get("expected_topics", [])
+        if not isinstance(expected_topics, list) or any(
+            not isinstance(item, str) for item in expected_topics
+        ):
+            raise ValueError(
+                f"Benchmark case {case.id} expected_topics must be a string list"
+            )
+
+        for row in result.get("results", []):
+            quality = evaluate_answer_quality(
+                str(row.get("answer") or ""),
+                expected_topics,
+            )
+            row.update(quality)
+
         mode_runs.append(result)
         case_rows.append(
             {
