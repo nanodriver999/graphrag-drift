@@ -45,4 +45,8 @@ def test_drift_search_loops_and_reduces():
     )
     assert out["answer"].startswith("DRIFT[DRIFT]:")
     assert out["depth"] == 2
+    assert out["primer_source"] == "community"
+    assert out["primer_report_ids"]
+    assert out["primer_answer"].startswith("DRIFT_PRIMER[DRIFT]:")
+    assert out["evidence"][0].id == "drift-primer"
     assert len(out["evidence"]) >= 1
