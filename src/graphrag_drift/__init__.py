@@ -6,6 +6,12 @@ from .query_expansion import LLMQueryExpandingRetriever
 from .cached_retrieval import CachedCommunityReportRetriever
 from .community_report_store import FileCommunityReportStore
 from .core import GraphRAGEngine
+from .drift_profiles import (
+    DRIFT_SEARCH_PROFILES,
+    DriftSearchProfile,
+    get_drift_search_profile,
+    resolve_drift_search_profile,
+)
 from .models import CommunityReport, SearchHit
 from .retrieval import InMemoryRetriever, MixedLocalContextRetriever, Retriever
 
@@ -15,6 +21,8 @@ __all__ = [
     "FileCommunityReportStore",
     "GlobalLLMReasoner",
     "GlobalSearchLLMSettings",
+    "DRIFT_SEARCH_PROFILES",
+    "DriftSearchProfile",
     "GraphRAGEngine",
     "GraphRAGLLMReasoner",
     "LLMQueryExpandingRetriever",
@@ -25,4 +33,6 @@ __all__ = [
     "InMemoryRetriever",
     "OpenAICompatibleTextGenerator",
     "Retriever",
+    "get_drift_search_profile",
+    "resolve_drift_search_profile",
 ]
