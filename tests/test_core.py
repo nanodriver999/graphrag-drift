@@ -38,4 +38,14 @@ def test_drift_engine_iterates_until_max_depth():
     assert out["depth"] == 2
     assert out["followups"] == []
     assert out["answer"].startswith("DRIFT[DRIFT]:")
-    assert len(out["evidence"]) == 3
+
+    evidence_ids = [hit.id for hit in out["evidence"]]
+    assert evidence_ids[0] == "drift-primer"
+    assert sum(item.startswith("drift-action:") for item in evidence_ids) == 2
+    assert len(out["evidence"]) == 5
+
+    assert out["action_count"] == 3
+    assert out["completed_action_count"] == 3
+    assert out["frontier_count"] == 0
+    assert out["epochs"] == 2
+    assert len(out["actions"]["edges"]) == 2
