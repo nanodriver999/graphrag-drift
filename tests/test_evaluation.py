@@ -39,7 +39,7 @@ def test_mode_benchmark_records_llm_calls_and_evidence() -> None:
                 "global partial 1",
                 "global partial 2",
                 "global answer",
-                '["followup"]',
+                '{"intermediate_answer":"primer answer","score":90,"follow_up_queries":["followup"]}',
                 "[]",
                 "drift answer",
             ]
@@ -72,4 +72,7 @@ def test_mode_benchmark_records_llm_calls_and_evidence() -> None:
     assert rows["drift"]["llm_calls"] == 3
     assert rows["drift"]["depth"] == 1
     assert rows["drift"]["evidence_count"] == 2
-    assert rows["drift"]["unique_evidence_count"] == 1
+    assert rows["drift"]["unique_evidence_count"] == 2
+    assert rows["drift"]["primer_source"] == "community"
+    assert rows["drift"]["primer_score"] == 90
+    assert rows["drift"]["primer_report_count"] == 1

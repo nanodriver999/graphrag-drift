@@ -35,11 +35,38 @@ class GraphRAGEngine:
 
     def drift_primer(self, query: str, *, top_k: int = 5) -> dict:
         assert self.reasoner is not None
-        hits = self.retriever.local_search(query, top_k=top_k)
+        reports = self.retriever.community_reports(query, top_k=top_k)
+        if not reports:
+            hits = self.retriever.local_search(query, top_k=top_k)
+            return {
+                "depth": 0,
+                "evidence": hits,
+                "followups": self.reasoner.generate_followups(query, hits, depth=0),
+                "primer_answer": "",
+                "primer_score": 0,
+                "primer_report_ids": [],
+                "primer_source": "local-fallback",
+            }
+
+        primer = self.reasoner.prime_drift(query, reports)
+        evidence: list[SearchHit] = []
+        if primer.intermediate_answer.strip():
+            evidence.append(
+                SearchHit(
+                    id="drift-primer",
+                    text=primer.intermediate_answer.strip(),
+                    score=primer.score / 100.0,
+                )
+            )
+
         return {
             "depth": 0,
-            "evidence": hits,
-            "followups": self.reasoner.generate_followups(query, hits, depth=0),
+            "evidence": evidence,
+            "followups": primer.follow_up_queries,
+            "primer_answer": primer.intermediate_answer,
+            "primer_score": primer.score,
+            "primer_report_ids": [report.id for report in reports],
+            "primer_source": "community",
         }
 
     def drift_expand(
@@ -74,13 +101,14 @@ class GraphRAGEngine:
     def drift(self, query: str, *, top_k: int = 5, max_depth: int = 2) -> dict:
         state = self.drift_primer(query, top_k=top_k)
         while state["followups"] and state["depth"] < max_depth:
-            state = self.drift_expand(
+            expanded = self.drift_expand(
                 query,
                 evidence=state["evidence"],
                 followups=state["followups"],
                 depth=state["depth"],
                 top_k=top_k,
             )
+            state = {**state, **expanded}
 
         state["answer"] = self.drift_reduce(query, state["evidence"])
         return state

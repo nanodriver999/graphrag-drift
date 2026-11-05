@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .models import CommunityReport, SearchHit
+from .models import CommunityReport, DriftPrimerResult, SearchHit
 
 
 class Reasoner(Protocol):
@@ -13,6 +13,13 @@ class Reasoner(Protocol):
         ...
 
     def reduce_global(self, query: str, partials: list[tuple[str, float]]) -> str:
+        ...
+
+    def prime_drift(
+        self,
+        query: str,
+        reports: list[CommunityReport],
+    ) -> DriftPrimerResult:
         ...
 
     def generate_followups(
@@ -44,6 +51,22 @@ class DeterministicReasoner:
     def reduce_global(self, query: str, partials: list[tuple[str, float]]) -> str:
         ranked = sorted(partials, key=lambda x: x[1], reverse=True)
         return f"GLOBAL[{query}]: " + " | ".join(text for text, _ in ranked)
+
+    def prime_drift(
+        self,
+        query: str,
+        reports: list[CommunityReport],
+    ) -> DriftPrimerResult:
+        if not reports:
+            return DriftPrimerResult("", 0, [])
+
+        ranked = sorted(reports, key=lambda item: item.score, reverse=True)
+        joined = " | ".join(report.summary for report in ranked)
+        return DriftPrimerResult(
+            intermediate_answer=f"DRIFT_PRIMER[{query}]: {joined}",
+            score=100,
+            follow_up_queries=[f"{query} followup 1"],
+        )
 
     def generate_followups(
         self,

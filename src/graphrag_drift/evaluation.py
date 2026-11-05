@@ -70,6 +70,9 @@ class GraphRAGModeBenchmark:
         if mode == "drift":
             metrics["depth"] = int(result.get("depth", 0))
             metrics["remaining_followups"] = len(result.get("followups", []))
+            metrics["primer_source"] = str(result.get("primer_source") or "")
+            metrics["primer_score"] = int(result.get("primer_score", 0))
+            metrics["primer_report_count"] = len(result.get("primer_report_ids", []))
         return metrics
 
     def _run(self, mode: str, fn) -> dict[str, Any]:
