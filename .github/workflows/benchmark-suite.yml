@@ -18,6 +18,11 @@ on:
         required: true
         default: "0.50"
         type: string
+      global_map_concurrency:
+        description: "Maximum concurrent Global Search map calls"
+        required: true
+        default: "4"
+        type: string
       as_of_date:
         description: "Legal retrieval date (YYYY-MM-DD)"
         required: true
@@ -236,6 +241,7 @@ jobs:
             --cases "${{ inputs.cases }}"
             --local-community-prop "${{ inputs.local_community_prop }}"
             --local-text-unit-prop "${{ inputs.local_text_unit_prop }}"
+            --global-map-concurrency "${{ inputs.global_map_concurrency }}"
             --drift-profile "${{ inputs.drift_profile }}"
             --output "$RUNNER_TEMP/graphrag-benchmark.json"
           )
