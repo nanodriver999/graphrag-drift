@@ -5,11 +5,13 @@ import json
 import os
 
 from graphrag_drift import (
+    DRIFT_SEARCH_PROFILES,
     GraphRAGEngine,
     GraphRAGLLMReasoner,
     LLMQueryExpandingRetriever,
     MixedLocalContextRetriever,
     OpenAICompatibleTextGenerator,
+    resolve_drift_search_profile,
 )
 from graphrag_drift.config import Neo4jSettings
 from graphrag_drift.evaluation import GraphRAGModeBenchmark, InstrumentedTextGenerator
@@ -44,18 +46,45 @@ def main() -> None:
     parser.add_argument("--local-text-unit-prop", type=float, default=0.50)
     parser.add_argument("--global-top-k", type=int, default=3)
     parser.add_argument("--drift-top-k", type=int, default=2)
-    parser.add_argument("--drift-max-depth", type=int, default=1)
-    parser.add_argument("--drift-max-actions-per-depth", type=int, default=2)
-    parser.add_argument("--drift-community-top-k", type=int, default=1)
-    parser.add_argument("--drift-action-concurrency", type=int, default=4)
-    parser.add_argument("--drift-primer-folds", type=int, default=5)
-    parser.add_argument("--drift-primer-concurrency", type=int, default=5)
+    parser.add_argument(
+        "--drift-profile",
+        choices=sorted(DRIFT_SEARCH_PROFILES),
+        default=None,
+        help="Named preset; omitted preserves this CLI's historical max-depth=1.",
+    )
+    parser.add_argument("--drift-max-depth", type=int, default=None)
+    parser.add_argument("--drift-max-actions-per-depth", type=int, default=None)
+    parser.add_argument("--drift-community-top-k", type=int, default=None)
+    parser.add_argument("--drift-action-concurrency", type=int, default=None)
+    parser.add_argument("--drift-primer-folds", type=int, default=None)
+    parser.add_argument("--drift-primer-concurrency", type=int, default=None)
+    parser.add_argument("--drift-max-followups", type=int, default=None)
     args = parser.parse_args()
+
+    profile_name = args.drift_profile or "economy"
+    max_depth = (
+        1
+        if args.drift_profile is None and args.drift_max_depth is None
+        else args.drift_max_depth
+    )
+    drift_profile = resolve_drift_search_profile(
+        profile_name,
+        max_depth=max_depth,
+        max_actions_per_depth=args.drift_max_actions_per_depth,
+        community_top_k=args.drift_community_top_k,
+        action_concurrency=args.drift_action_concurrency,
+        primer_folds=args.drift_primer_folds,
+        primer_concurrency=args.drift_primer_concurrency,
+        max_followups=args.drift_max_followups,
+    )
 
     base = Neo4jGraphRAGRetriever.from_settings(Neo4jSettings.from_env())
     try:
         generator = _generator()
-        reasoner = GraphRAGLLMReasoner(generator=generator)
+        reasoner = GraphRAGLLMReasoner(
+            generator=generator,
+            max_followups=drift_profile.max_followups,
+        )
 
         mixed_local = MixedLocalContextRetriever(
             retriever=base,
@@ -82,12 +111,14 @@ def main() -> None:
             local_text_unit_prop=args.local_text_unit_prop,
             global_top_k=args.global_top_k,
             drift_top_k=args.drift_top_k,
-            drift_max_depth=args.drift_max_depth,
-            drift_max_actions_per_depth=args.drift_max_actions_per_depth,
-            drift_community_top_k=args.drift_community_top_k,
-            drift_action_concurrency=args.drift_action_concurrency,
-            drift_primer_folds=args.drift_primer_folds,
-            drift_primer_concurrency=args.drift_primer_concurrency,
+            drift_profile=drift_profile.name,
+            drift_max_followups=drift_profile.max_followups,
+            drift_max_depth=drift_profile.max_depth,
+            drift_max_actions_per_depth=drift_profile.max_actions_per_depth,
+            drift_community_top_k=drift_profile.community_top_k,
+            drift_action_concurrency=drift_profile.action_concurrency,
+            drift_primer_folds=drift_profile.primer_folds,
+            drift_primer_concurrency=drift_profile.primer_concurrency,
         )
         result["local_retrieval_queries"] = local_retriever.last_queries
         print(json.dumps(result, ensure_ascii=False, indent=2))
