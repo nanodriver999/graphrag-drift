@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from .drift_state import DriftAction, DriftQueryState
 from .llm import DeterministicReasoner, Reasoner
-from .models import DriftActionResult, SearchHit
+from .models import CommunityReport, DriftActionResult, DriftPrimerResult, SearchHit
 from .retrieval import Retriever
 
 
@@ -35,7 +35,59 @@ class GraphRAGEngine:
             "answer": self.reasoner.reduce_global(query, partials),
         }
 
-    def drift_primer(self, query: str, *, top_k: int = 5) -> dict:
+    @staticmethod
+    def _split_primer_reports(
+        reports: list[CommunityReport],
+        *,
+        primer_folds: int,
+    ) -> list[list[CommunityReport]]:
+        if not reports:
+            return []
+
+        fold_count = min(max(1, primer_folds), len(reports))
+        base_size, remainder = divmod(len(reports), fold_count)
+        folds: list[list[CommunityReport]] = []
+        offset = 0
+        for index in range(fold_count):
+            size = base_size + (1 if index < remainder else 0)
+            folds.append(reports[offset : offset + size])
+            offset += size
+        return folds
+
+    @staticmethod
+    def _aggregate_primer_results(
+        results: list[DriftPrimerResult],
+    ) -> DriftPrimerResult:
+        if not results:
+            return DriftPrimerResult("", 0, [])
+
+        answers = [
+            item.intermediate_answer.strip()
+            for item in results
+            if item.intermediate_answer.strip()
+        ]
+        followups: list[str] = []
+        for item in results:
+            for query in item.follow_up_queries:
+                normalized = query.strip()
+                if normalized and normalized not in followups:
+                    followups.append(normalized)
+
+        score = round(sum(item.score for item in results) / len(results))
+        return DriftPrimerResult(
+            intermediate_answer="\n\n".join(answers),
+            score=max(0, min(100, score)),
+            follow_up_queries=followups,
+        )
+
+    def drift_primer(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        primer_folds: int = 5,
+        primer_concurrency: int = 5,
+    ) -> dict:
         assert self.reasoner is not None
         reports = self.retriever.community_reports(query, top_k=top_k)
         if not reports:
@@ -47,10 +99,31 @@ class GraphRAGEngine:
                 "primer_answer": "",
                 "primer_score": 0,
                 "primer_report_ids": [],
+                "primer_fold_count": 0,
                 "primer_source": "local-fallback",
             }
 
-        primer = self.reasoner.prime_drift(query, reports)
+        folds = self._split_primer_reports(
+            reports,
+            primer_folds=primer_folds,
+        )
+        worker_count = min(max(1, primer_concurrency), len(folds))
+
+        if worker_count == 1:
+            fold_results = [
+                self.reasoner.prime_drift(query, fold)
+                for fold in folds
+            ]
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [
+                    executor.submit(self.reasoner.prime_drift, query, fold)
+                    for fold in folds
+                ]
+                # Preserve fold order while allowing the LLM calls to run concurrently.
+                fold_results = [future.result() for future in futures]
+
+        primer = self._aggregate_primer_results(fold_results)
         evidence: list[SearchHit] = []
         if primer.intermediate_answer.strip():
             evidence.append(
@@ -68,6 +141,7 @@ class GraphRAGEngine:
             "primer_answer": primer.intermediate_answer,
             "primer_score": primer.score,
             "primer_report_ids": [report.id for report in reports],
+            "primer_fold_count": len(folds),
             "primer_source": "community",
         }
 
@@ -165,9 +239,16 @@ class GraphRAGEngine:
         max_actions_per_depth: int = 2,
         community_top_k: int = 1,
         action_concurrency: int = 4,
+        primer_folds: int = 5,
+        primer_concurrency: int = 5,
     ) -> dict:
         assert self.reasoner is not None
-        primer_state = self.drift_primer(query, top_k=top_k)
+        primer_state = self.drift_primer(
+            query,
+            top_k=top_k,
+            primer_folds=primer_folds,
+            primer_concurrency=primer_concurrency,
+        )
         evidence = list(primer_state["evidence"])
         query_state = DriftQueryState()
 
@@ -276,6 +357,7 @@ class GraphRAGEngine:
             "frontier_count": len(remaining),
             "epochs": epochs,
             "action_concurrency": max(1, action_concurrency),
+            "primer_concurrency": max(1, primer_concurrency),
         }
         result["answer"] = self.drift_reduce(query, evidence)
         return result
