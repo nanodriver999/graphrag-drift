@@ -55,3 +55,35 @@ def test_render_benchmark_markdown_includes_summary_and_answers() -> None:
     assert "| drift | 30.0 | 4.0 | 5.0 | 1.0 | 0.0 | 3.0 | 2.0 |" in rendered
     assert "### q1" in rendered
     assert "answer text" in rendered
+
+
+def test_render_benchmark_markdown_includes_drift_settings() -> None:
+    result = {
+        "summary": {"case_count": 1, "modes": {}},
+        "cases": [
+            {
+                "id": "case-1",
+                "query": "q",
+                "benchmark": {
+                    "settings": {
+                        "local_top_k": 4,
+                        "global_top_k": 3,
+                        "drift_top_k": 2,
+                        "drift_max_depth": 3,
+                        "drift_max_actions_per_depth": 4,
+                        "drift_community_top_k": 1,
+                        "drift_action_concurrency": 8,
+                        "drift_primer_folds": 5,
+                        "drift_primer_concurrency": 5,
+                    },
+                    "results": [],
+                },
+            }
+        ],
+    }
+
+    markdown = render_benchmark_markdown(result)
+
+    assert "DRIFT max depth: 3" in markdown
+    assert "DRIFT action concurrency: 8" in markdown
+    assert "DRIFT primer folds: 5" in markdown
