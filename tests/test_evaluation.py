@@ -83,3 +83,46 @@ def test_mode_benchmark_records_llm_calls_and_evidence() -> None:
     assert rows["drift"]["completed_action_count"] == 2
     assert rows["drift"]["frontier_count"] == 0
     assert rows["drift"]["epochs"] == 1
+
+
+def test_mode_benchmark_records_named_drift_profile_settings() -> None:
+    generator = InstrumentedTextGenerator(
+        FakeGenerator(
+            responses=[
+                "local answer",
+                "global partial",
+                "global answer",
+                '{"intermediate_answer":"primer","score":80,"follow_up_queries":[]}',
+                "drift answer",
+            ]
+        )
+    )
+    reasoner = GraphRAGLLMReasoner(generator=generator, max_followups=20)
+    engine = GraphRAGEngine(retriever=FakeRetriever(), reasoner=reasoner)
+    benchmark = GraphRAGModeBenchmark(
+        local_engine=engine,
+        global_engine=engine,
+        drift_engine=engine,
+        generator_probe=generator,
+    )
+
+    result = benchmark.run(
+        "test query",
+        local_top_k=1,
+        global_top_k=1,
+        drift_top_k=1,
+        drift_profile="microsoft-like",
+        drift_max_followups=20,
+        drift_max_depth=3,
+        drift_max_actions_per_depth=8,
+        drift_community_top_k=2,
+        drift_action_concurrency=32,
+        drift_primer_folds=5,
+        drift_primer_concurrency=32,
+    )
+
+    settings = result["settings"]
+    assert settings["drift_profile"] == "microsoft-like"
+    assert settings["drift_max_followups"] == 20
+    assert settings["drift_max_depth"] == 3
+    assert settings["drift_action_concurrency"] == 32
