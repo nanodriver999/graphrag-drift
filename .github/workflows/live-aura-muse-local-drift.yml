@@ -139,6 +139,15 @@ jobs:
           print("Local answer:", result["answer"])
           PY
 
+      - name: Verify current-law Local regression when data is available
+        shell: bash
+        run: |
+          python scripts/verify_current_law_regression.py \
+            --coverage "$RUNNER_TEMP/temporal-coverage.json" \
+            --local-result "$RUNNER_TEMP/local.json" \
+            --law-id 011435 \
+            --article-fragment ":art:53-3"
+
       - name: Run DRIFT Search with Aura and Muse
         env:
           OPENAI_COMPATIBLE_BASE_URL: http://127.0.0.1:8000
