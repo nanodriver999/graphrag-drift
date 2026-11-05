@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import Lock
 from time import perf_counter
 from typing import Any
 
@@ -14,20 +15,24 @@ class InstrumentedTextGenerator:
     call_count: int = 0
     total_seconds: float = 0.0
     prompts: list[str] = field(default_factory=list)
+    _lock: Any = field(default_factory=Lock, init=False, repr=False)
 
     def reset(self) -> None:
-        self.call_count = 0
-        self.total_seconds = 0.0
-        self.prompts.clear()
+        with self._lock:
+            self.call_count = 0
+            self.total_seconds = 0.0
+            self.prompts.clear()
 
     def generate(self, prompt: str) -> str:
         start = perf_counter()
         try:
             return self.generator.generate(prompt)
         finally:
-            self.call_count += 1
-            self.total_seconds += perf_counter() - start
-            self.prompts.append(prompt)
+            elapsed = perf_counter() - start
+            with self._lock:
+                self.call_count += 1
+                self.total_seconds += elapsed
+                self.prompts.append(prompt)
 
 
 @dataclass
@@ -73,6 +78,9 @@ class GraphRAGModeBenchmark:
             metrics["primer_source"] = str(result.get("primer_source") or "")
             metrics["primer_score"] = int(result.get("primer_score", 0))
             metrics["primer_report_count"] = len(result.get("primer_report_ids", []))
+            metrics["primer_fold_count"] = int(result.get("primer_fold_count", 0))
+            metrics["action_concurrency"] = int(result.get("action_concurrency", 1))
+            metrics["primer_concurrency"] = int(result.get("primer_concurrency", 1))
             metrics["action_count"] = int(result.get("action_count", 0))
             metrics["completed_action_count"] = int(result.get("completed_action_count", 0))
             metrics["frontier_count"] = int(result.get("frontier_count", 0))
@@ -94,6 +102,11 @@ class GraphRAGModeBenchmark:
         global_top_k: int = 5,
         drift_top_k: int = 5,
         drift_max_depth: int = 2,
+        drift_max_actions_per_depth: int = 2,
+        drift_community_top_k: int = 1,
+        drift_action_concurrency: int = 4,
+        drift_primer_folds: int = 5,
+        drift_primer_concurrency: int = 5,
     ) -> dict[str, Any]:
         rows = [
             self._run(
@@ -110,6 +123,11 @@ class GraphRAGModeBenchmark:
                     query,
                     top_k=drift_top_k,
                     max_depth=drift_max_depth,
+                    max_actions_per_depth=drift_max_actions_per_depth,
+                    community_top_k=drift_community_top_k,
+                    action_concurrency=drift_action_concurrency,
+                    primer_folds=drift_primer_folds,
+                    primer_concurrency=drift_primer_concurrency,
                 ),
             ),
         ]

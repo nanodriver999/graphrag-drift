@@ -51,6 +51,18 @@ def main() -> None:
         default=4,
         help="Maximum number of DRIFT follow-up actions executed concurrently.",
     )
+    parser.add_argument(
+        "--primer-folds",
+        type=int,
+        default=5,
+        help="Number of folds used to prime DRIFT from Community Reports.",
+    )
+    parser.add_argument(
+        "--primer-concurrency",
+        type=int,
+        default=5,
+        help="Maximum number of DRIFT primer folds executed concurrently.",
+    )
     parser.add_argument("--no-query-expansion", action="store_true")
     args = parser.parse_args()
 
@@ -78,6 +90,8 @@ def main() -> None:
                 max_depth=args.max_depth,
                 community_top_k=args.community_top_k,
                 action_concurrency=args.action_concurrency,
+                primer_folds=args.primer_folds,
+                primer_concurrency=args.primer_concurrency,
             )
 
         serializable = dict(result)

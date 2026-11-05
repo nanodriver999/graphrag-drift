@@ -192,3 +192,81 @@ def test_drift_action_concurrency_one_preserves_sequential_mode() -> None:
 
     assert result["action_concurrency"] == 1
     assert result["completed_action_count"] == 3
+
+
+@dataclass
+class PrimerFoldRetriever:
+    def local_search(self, query: str, *, top_k: int = 5) -> list[SearchHit]:
+        return [SearchHit("local", "fallback", 0.5)]
+
+    def community_reports(self, query: str, *, top_k: int = 5) -> list[CommunityReport]:
+        reports = [
+            CommunityReport("r1", "report 1", 0.9),
+            CommunityReport("r2", "report 2", 0.8),
+            CommunityReport("r3", "report 3", 0.7),
+            CommunityReport("r4", "report 4", 0.6),
+        ]
+        return reports[:top_k]
+
+
+class PrimerFoldReasoner(DeterministicReasoner):
+    def __init__(self) -> None:
+        self.barrier = Barrier(2, timeout=2)
+        self.thread_ids: set[int] = set()
+        self.fold_ids: list[list[str]] = []
+
+    def prime_drift(
+        self,
+        query: str,
+        reports: list[CommunityReport],
+    ) -> DriftPrimerResult:
+        ids = [report.id for report in reports]
+        self.fold_ids.append(ids)
+        self.thread_ids.add(get_ident())
+        self.barrier.wait()
+        score = 80 if ids[0] == "r1" else 60
+        return DriftPrimerResult(
+            f"primer for {','.join(ids)}",
+            score,
+            ["shared", f"followup-{ids[0]}"],
+        )
+
+
+def test_drift_primer_splits_reports_into_parallel_folds_and_aggregates() -> None:
+    reasoner = PrimerFoldReasoner()
+    engine = GraphRAGEngine(
+        retriever=PrimerFoldRetriever(),
+        reasoner=reasoner,
+    )
+
+    result = engine.drift_primer(
+        "root question",
+        top_k=4,
+        primer_folds=2,
+        primer_concurrency=2,
+    )
+
+    assert result["primer_fold_count"] == 2
+    assert result["primer_score"] == 70
+    assert result["primer_report_ids"] == ["r1", "r2", "r3", "r4"]
+    assert result["followups"] == ["shared", "followup-r1", "followup-r3"]
+    assert "primer for r1,r2" in result["primer_answer"]
+    assert "primer for r3,r4" in result["primer_answer"]
+    assert len(reasoner.thread_ids) == 2
+    assert sorted(reasoner.fold_ids) == [["r1", "r2"], ["r3", "r4"]]
+
+
+def test_drift_primer_caps_fold_count_to_report_count() -> None:
+    engine = GraphRAGEngine(
+        retriever=PrimerFoldRetriever(),
+        reasoner=DeterministicReasoner(),
+    )
+
+    result = engine.drift_primer(
+        "root question",
+        top_k=2,
+        primer_folds=5,
+        primer_concurrency=5,
+    )
+
+    assert result["primer_fold_count"] == 2
