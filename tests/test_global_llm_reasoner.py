@@ -16,7 +16,7 @@ class FakeGenerator:
         return self.responses.pop(0)
 
 
-def test_global_llm_reasoner_maps_from_single_community_report() -> None:
+def test_global_llm_reasoner_keeps_plain_text_map_fallback() -> None:
     generator = FakeGenerator(responses=["Relevant duty: appoint a safety manager."])
     reasoner = GlobalLLMReasoner(generator=generator)
     report = CommunityReport(
@@ -33,24 +33,49 @@ def test_global_llm_reasoner_maps_from_single_community_report() -> None:
     assert "What are the safety-manager duties?" in generator.prompts[0]
 
 
-def test_global_llm_reasoner_reduces_only_useful_partials() -> None:
+def test_global_llm_reasoner_uses_structured_map_relevance_score() -> None:
+    generator = FakeGenerator(
+        responses=['{"answer":"Relevant legal duty","score":82}']
+    )
+    reasoner = GlobalLLMReasoner(generator=generator)
+    report = CommunityReport("c1", "report", 0.2)
+
+    partial = reasoner.map_community("query", report)
+
+    assert partial == ("Relevant legal duty", 0.82)
+    assert "score must be an integer from 0 to 100" in generator.prompts[0]
+
+
+def test_global_llm_reasoner_maps_zero_score_to_irrelevant() -> None:
+    generator = FakeGenerator(
+        responses=['{"answer":"should be ignored","score":0}']
+    )
+    reasoner = GlobalLLMReasoner(generator=generator)
+
+    assert reasoner.map_community(
+        "query",
+        CommunityReport("c1", "report", 1.0),
+    ) == ("", 0.0)
+
+
+def test_global_llm_reasoner_reduces_only_useful_partials_by_score() -> None:
     generator = FakeGenerator(responses=["Combined grounded answer."])
     reasoner = GlobalLLMReasoner(generator=generator)
 
     answer = reasoner.reduce_global(
         "Summarize the duties.",
         [
-            ("NOT_RELEVANT", 1.0),
-            ("Operators must manage radiation dose.", 0.8),
-            ("Safety managers must be appointed.", 0.7),
+            ("ignored", 0.0),
+            ("Lower priority evidence.", 0.4),
+            ("Higher priority evidence.", 0.9),
         ],
     )
 
     assert answer == "Combined grounded answer."
     prompt = generator.prompts[0]
-    assert "Operators must manage radiation dose." in prompt
-    assert "Safety managers must be appointed." in prompt
-    assert "NOT_RELEVANT" not in prompt
+    assert "ignored" not in prompt
+    assert prompt.index("Higher priority evidence.") < prompt.index("Lower priority evidence.")
+    assert "Importance Score: 0.900" in prompt
 
 
 def test_global_llm_reasoner_returns_fallback_when_nothing_is_relevant() -> None:
@@ -59,7 +84,7 @@ def test_global_llm_reasoner_returns_fallback_when_nothing_is_relevant() -> None
 
     answer = reasoner.reduce_global(
         "unrelated query",
-        [("NOT_RELEVANT", 1.0), ("", 0.5)],
+        [("", 0.0), ("NOT_RELEVANT", 0.0)],
     )
 
     assert answer == "No relevant Community Report evidence was found."
