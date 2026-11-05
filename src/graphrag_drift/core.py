@@ -95,6 +95,40 @@ class GraphRAGEngine:
             ),
         }
 
+    def _community_context_hits(
+        self,
+        query: str,
+        *,
+        top_k: int,
+    ) -> list[SearchHit]:
+        if top_k <= 0:
+            return []
+        reports = self.retriever.community_reports(query, top_k=top_k)
+        return [
+            SearchHit(
+                id=f"community:{report.id}",
+                text=report.summary,
+                score=report.score,
+            )
+            for report in reports
+        ]
+
+    def _drift_mixed_context(
+        self,
+        query: str,
+        *,
+        local_top_k: int,
+        community_top_k: int,
+    ) -> list[SearchHit]:
+        hits = self.retriever.local_search(query, top_k=local_top_k)
+        hits.extend(
+            self._community_context_hits(
+                query,
+                top_k=community_top_k,
+            )
+        )
+        return hits
+
     def drift_reduce(self, query: str, evidence: list[SearchHit]) -> str:
         assert self.reasoner is not None
         return self.reasoner.reduce_drift(query, evidence)
@@ -106,6 +140,7 @@ class GraphRAGEngine:
         top_k: int = 5,
         max_depth: int = 2,
         max_actions_per_depth: int = 2,
+        community_top_k: int = 1,
     ) -> dict:
         assert self.reasoner is not None
         primer_state = self.drift_primer(query, top_k=top_k)
@@ -152,7 +187,11 @@ class GraphRAGEngine:
 
             actions = frontier[: max(1, max_actions_per_depth)]
             for action in actions:
-                hits = self.retriever.local_search(action.query, top_k=top_k)
+                hits = self._drift_mixed_context(
+                    action.query,
+                    local_top_k=top_k,
+                    community_top_k=community_top_k,
+                )
                 action_result = self.reasoner.answer_drift_action(
                     query,
                     action.query,
