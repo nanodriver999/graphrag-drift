@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from .drift_state import DriftAction, DriftQueryState
@@ -129,6 +130,28 @@ class GraphRAGEngine:
         )
         return hits
 
+    def _execute_drift_action(
+        self,
+        global_query: str,
+        action: DriftAction,
+        *,
+        top_k: int,
+        community_top_k: int,
+    ) -> tuple[DriftAction, object, list[SearchHit]]:
+        assert self.reasoner is not None
+        hits = self._drift_mixed_context(
+            action.query,
+            local_top_k=top_k,
+            community_top_k=community_top_k,
+        )
+        result = self.reasoner.answer_drift_action(
+            global_query,
+            action.query,
+            hits,
+            depth=action.depth,
+        )
+        return action, result, hits
+
     def drift_reduce(self, query: str, evidence: list[SearchHit]) -> str:
         assert self.reasoner is not None
         return self.reasoner.reduce_drift(query, evidence)
@@ -141,6 +164,7 @@ class GraphRAGEngine:
         max_depth: int = 2,
         max_actions_per_depth: int = 2,
         community_top_k: int = 1,
+        action_concurrency: int = 4,
     ) -> dict:
         assert self.reasoner is not None
         primer_state = self.drift_primer(query, top_k=top_k)
@@ -186,18 +210,34 @@ class GraphRAGEngine:
                 break
 
             actions = frontier[: max(1, max_actions_per_depth)]
-            for action in actions:
-                hits = self._drift_mixed_context(
-                    action.query,
-                    local_top_k=top_k,
-                    community_top_k=community_top_k,
-                )
-                action_result = self.reasoner.answer_drift_action(
-                    query,
-                    action.query,
-                    hits,
-                    depth=action.depth,
-                )
+            worker_count = min(max(1, action_concurrency), len(actions))
+
+            if worker_count == 1:
+                action_results = [
+                    self._execute_drift_action(
+                        query,
+                        action,
+                        top_k=top_k,
+                        community_top_k=community_top_k,
+                    )
+                    for action in actions
+                ]
+            else:
+                with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                    futures = [
+                        executor.submit(
+                            self._execute_drift_action,
+                            query,
+                            action,
+                            top_k=top_k,
+                            community_top_k=community_top_k,
+                        )
+                        for action in actions
+                    ]
+                    # Consume futures in ranked action order so state updates remain deterministic.
+                    action_results = [future.result() for future in futures]
+
+            for action, action_result, hits in action_results:
                 completed = query_state.complete_action(
                     action.query,
                     action_result,
@@ -235,6 +275,7 @@ class GraphRAGEngine:
             "completed_action_count": len(query_state.completed_actions()),
             "frontier_count": len(remaining),
             "epochs": epochs,
+            "action_concurrency": max(1, action_concurrency),
         }
         result["answer"] = self.drift_reduce(query, evidence)
         return result
