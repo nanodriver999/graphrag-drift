@@ -18,6 +18,31 @@ on:
         required: true
         default: "2"
         type: string
+      drift_max_actions_per_depth:
+        description: "Maximum DRIFT actions selected per epoch"
+        required: true
+        default: "2"
+        type: string
+      drift_community_top_k:
+        description: "Community Reports mixed into each follow-up action"
+        required: true
+        default: "1"
+        type: string
+      drift_action_concurrency:
+        description: "Maximum concurrent DRIFT follow-up actions"
+        required: true
+        default: "4"
+        type: string
+      drift_primer_folds:
+        description: "Number of DRIFT primer folds"
+        required: true
+        default: "5"
+        type: string
+      drift_primer_concurrency:
+        description: "Maximum concurrent DRIFT primer folds"
+        required: true
+        default: "5"
+        type: string
 
 permissions:
   contents: read
@@ -174,7 +199,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/run_benchmark_suite.py             --cases "${{ inputs.cases }}"             --drift-max-depth "${{ inputs.drift_max_depth }}"             --output "$RUNNER_TEMP/graphrag-benchmark.json"
+          python scripts/run_benchmark_suite.py \
+            --cases "${{ inputs.cases }}" \
+            --drift-max-depth "${{ inputs.drift_max_depth }}" \
+            --drift-max-actions-per-depth "${{ inputs.drift_max_actions_per_depth }}" \
+            --drift-community-top-k "${{ inputs.drift_community_top_k }}" \
+            --drift-action-concurrency "${{ inputs.drift_action_concurrency }}" \
+            --drift-primer-folds "${{ inputs.drift_primer_folds }}" \
+            --drift-primer-concurrency "${{ inputs.drift_primer_concurrency }}" \
+            --output "$RUNNER_TEMP/graphrag-benchmark.json"
 
           python scripts/render_benchmark_report.py             "$RUNNER_TEMP/graphrag-benchmark.json"             --output "$RUNNER_TEMP/graphrag-benchmark.md"
 
