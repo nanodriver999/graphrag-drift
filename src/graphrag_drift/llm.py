@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .models import CommunityReport, DriftPrimerResult, SearchHit
+from .models import CommunityReport, DriftActionResult, DriftPrimerResult, SearchHit
 
 
 class Reasoner(Protocol):
@@ -20,6 +20,16 @@ class Reasoner(Protocol):
         query: str,
         reports: list[CommunityReport],
     ) -> DriftPrimerResult:
+        ...
+
+    def answer_drift_action(
+        self,
+        global_query: str,
+        action_query: str,
+        hits: list[SearchHit],
+        *,
+        depth: int,
+    ) -> DriftActionResult:
         ...
 
     def generate_followups(
@@ -66,6 +76,23 @@ class DeterministicReasoner:
             intermediate_answer=f"DRIFT_PRIMER[{query}]: {joined}",
             score=100,
             follow_up_queries=[f"{query} followup 1"],
+        )
+
+    def answer_drift_action(
+        self,
+        global_query: str,
+        action_query: str,
+        hits: list[SearchHit],
+        *,
+        depth: int,
+    ) -> DriftActionResult:
+        joined = " | ".join(hit.text for hit in hits)
+        score = max((hit.score for hit in hits), default=0.0)
+        followups = [] if depth >= 2 else [f"{action_query} detail {depth + 1}"]
+        return DriftActionResult(
+            response=f"DRIFT_ACTION[{action_query}]: {joined}",
+            score=max(0, min(100, round(score * 100))),
+            follow_up_queries=followups,
         )
 
     def generate_followups(
