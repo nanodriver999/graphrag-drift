@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 
 from .global_llm_reasoner import GlobalLLMReasoner
-from .models import SearchHit
+from .models import CommunityReport, DriftPrimerResult, SearchHit
 
 
 def _format_evidence(evidence: list[SearchHit], *, limit: int = 20) -> str:
@@ -19,6 +19,16 @@ def _format_evidence(evidence: list[SearchHit], *, limit: int = 20) -> str:
             text = text[:6000] + "..."
         rows.append(f"[{hit.id}] score={hit.score:.4f}\n{text}")
     return "\n\n--- EVIDENCE ---\n\n".join(rows)
+
+
+def _format_reports(reports: list[CommunityReport], *, limit: int = 20) -> str:
+    rows: list[str] = []
+    for report in reports[:limit]:
+        text = report.summary.strip()
+        if len(text) > 6000:
+            text = text[:6000] + "..."
+        rows.append(f"[{report.id}] score={report.score:.4f}\n{text}")
+    return "\n\n--- COMMUNITY REPORT ---\n\n".join(rows)
 
 
 @dataclass
@@ -41,6 +51,68 @@ class GraphRAGLLMReasoner(GlobalLLMReasoner):
             f"Retrieved evidence:\n{_format_evidence(hits)}\n"
         )
         return self.generator.generate(prompt).strip()
+
+    def prime_drift(
+        self,
+        query: str,
+        reports: list[CommunityReport],
+    ) -> DriftPrimerResult:
+        if not reports:
+            return DriftPrimerResult("", 0, [])
+
+        prompt = (
+            "You are the primer phase of DRIFT GraphRAG.\n"
+            "Use the top-ranked Community Reports to form a broad intermediate answer "
+            "and propose focused follow-up queries for later Local Search.\n"
+            "Use only the supplied reports for factual claims.\n"
+            "Return ONLY a JSON object with keys intermediate_answer, score, "
+            "follow_up_queries. score must be an integer from 0 to 100. "
+            f"follow_up_queries must contain at most {self.max_followups} short strings.\n\n"
+            f"Query:\n{query}\n\n"
+            f"Community Reports:\n{_format_reports(reports)}\n"
+        )
+        raw = self.generator.generate(prompt).strip()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            best = max(reports, key=lambda item: item.score)
+            return DriftPrimerResult(
+                intermediate_answer=best.summary.strip(),
+                score=max(0, min(100, round(best.score * 100))),
+                follow_up_queries=[],
+            )
+
+        if not isinstance(payload, dict):
+            payload = {}
+
+        answer = payload.get("intermediate_answer")
+        if not isinstance(answer, str) or not answer.strip():
+            answer = max(reports, key=lambda item: item.score).summary
+
+        score = payload.get("score", 0)
+        if not isinstance(score, int):
+            try:
+                score = int(score)
+            except (TypeError, ValueError):
+                score = 0
+        score = max(0, min(100, score))
+
+        raw_followups = payload.get("follow_up_queries", [])
+        followups: list[str] = []
+        if isinstance(raw_followups, list):
+            for item in raw_followups:
+                if isinstance(item, str):
+                    item = item.strip()
+                    if item and item not in followups:
+                        followups.append(item)
+                if len(followups) >= self.max_followups:
+                    break
+
+        return DriftPrimerResult(
+            intermediate_answer=answer.strip(),
+            score=score,
+            follow_up_queries=followups,
+        )
 
     def generate_followups(
         self,
@@ -87,6 +159,7 @@ class GraphRAGLLMReasoner(GlobalLLMReasoner):
         prompt = (
             "You are a DRIFT GraphRAG answer synthesizer.\n"
             "Answer the original query using only the accumulated evidence from iterative retrieval.\n"
+            "The evidence may include a broad community-report primer plus Local Search results.\n"
             "Resolve overlaps, avoid duplication, and preserve uncertainty where evidence is incomplete.\n"
             "Do not introduce facts absent from the evidence.\n\n"
             f"Original query:\n{query}\n\n"
