@@ -9,6 +9,7 @@ from graphrag_drift import (
     GraphRAGEngine,
     GraphRAGLLMReasoner,
     LLMQueryExpandingRetriever,
+    MixedLocalContextRetriever,
     OpenAICompatibleTextGenerator,
 )
 from graphrag_drift.config import Neo4jSettings
@@ -39,6 +40,12 @@ def main() -> None:
     parser.add_argument("query")
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--max-depth", type=int, default=2)
+    parser.add_argument(
+        "--local-community-prop",
+        type=float,
+        default=0.25,
+        help="Proportion of Local top-k reserved for Community Reports.",
+    )
     parser.add_argument(
         "--community-top-k",
         type=int,
@@ -73,12 +80,18 @@ def main() -> None:
 
         query_expander = None
         retriever = base_retriever
-        if args.mode == "local" and not args.no_query_expansion:
-            query_expander = LLMQueryExpandingRetriever(
+        if args.mode == "local":
+            mixed_local = MixedLocalContextRetriever(
                 retriever=base_retriever,
-                generator=generator,
+                community_prop=args.local_community_prop,
             )
-            retriever = query_expander
+            retriever = mixed_local
+            if not args.no_query_expansion:
+                query_expander = LLMQueryExpandingRetriever(
+                    retriever=mixed_local,
+                    generator=generator,
+                )
+                retriever = query_expander
 
         engine = GraphRAGEngine(retriever=retriever, reasoner=reasoner)
         if args.mode == "local":
