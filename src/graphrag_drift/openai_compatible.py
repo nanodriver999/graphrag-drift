@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
-from urllib import request
+from urllib import error, request
+
+
+_RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 
 @dataclass(frozen=True)
@@ -19,9 +23,22 @@ class OpenAICompatibleTextGenerator:
     api_key: str | None = None
     timeout_seconds: float = 60.0
     temperature: float = 0.0
+    max_retries: int = 3
+    retry_backoff_seconds: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+        if self.retry_backoff_seconds < 0:
+            raise ValueError("retry_backoff_seconds must be >= 0")
 
     def _endpoint(self) -> str:
         return self.base_url.rstrip("/") + "/v1/chat/completions"
+
+    def _sleep_before_retry(self, attempt: int) -> None:
+        delay = self.retry_backoff_seconds * (2 ** attempt)
+        if delay > 0:
+            time.sleep(delay)
 
     def generate(self, prompt: str) -> str:
         payload = {
@@ -49,8 +66,25 @@ class OpenAICompatibleTextGenerator:
             headers=headers,
             method="POST",
         )
-        with request.urlopen(req, timeout=self.timeout_seconds) as response:
-            data = json.loads(response.read().decode("utf-8"))
+
+        data = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                break
+            except error.HTTPError as exc:
+                retryable = exc.code in _RETRYABLE_HTTP_STATUS
+                if not retryable or attempt >= self.max_retries:
+                    raise
+                self._sleep_before_retry(attempt)
+            except error.URLError:
+                if attempt >= self.max_retries:
+                    raise
+                self._sleep_before_retry(attempt)
+
+        if data is None:
+            raise RuntimeError("OpenAI-compatible request exhausted retries")
 
         try:
             content = data["choices"][0]["message"]["content"]

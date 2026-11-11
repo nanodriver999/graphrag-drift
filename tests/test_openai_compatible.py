@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 import pytest
@@ -98,3 +99,93 @@ def test_openai_compatible_generator_rejects_invalid_response() -> None:
     ):
         with pytest.raises(ValueError, match="choices"):
             generator.generate("hello")
+
+
+
+def test_openai_compatible_generator_retries_transient_http_error() -> None:
+    generator = OpenAICompatibleTextGenerator(
+        base_url="http://localhost:8000",
+        model="test-model",
+        max_retries=2,
+        retry_backoff_seconds=0,
+    )
+    transient = HTTPError(
+        "http://localhost:8000/v1/chat/completions",
+        502,
+        "Bad Gateway",
+        hdrs=None,
+        fp=None,
+    )
+    response = FakeResponse(
+        {"choices": [{"message": {"content": "recovered answer"}}]}
+    )
+
+    with patch(
+        "graphrag_drift.openai_compatible.request.urlopen",
+        side_effect=[transient, response],
+    ) as urlopen:
+        assert generator.generate("hello") == "recovered answer"
+
+    assert urlopen.call_count == 2
+
+
+def test_openai_compatible_generator_does_not_retry_permanent_http_error() -> None:
+    generator = OpenAICompatibleTextGenerator(
+        base_url="http://localhost:8000",
+        model="test-model",
+        max_retries=3,
+        retry_backoff_seconds=0,
+    )
+    permanent = HTTPError(
+        "http://localhost:8000/v1/chat/completions",
+        400,
+        "Bad Request",
+        hdrs=None,
+        fp=None,
+    )
+
+    with patch(
+        "graphrag_drift.openai_compatible.request.urlopen",
+        side_effect=permanent,
+    ) as urlopen:
+        with pytest.raises(HTTPError):
+            generator.generate("hello")
+
+    assert urlopen.call_count == 1
+
+
+def test_openai_compatible_generator_retries_url_error() -> None:
+    generator = OpenAICompatibleTextGenerator(
+        base_url="http://localhost:8000",
+        model="test-model",
+        max_retries=1,
+        retry_backoff_seconds=0,
+    )
+    response = FakeResponse(
+        {"choices": [{"message": {"content": "network recovered"}}]}
+    )
+
+    with patch(
+        "graphrag_drift.openai_compatible.request.urlopen",
+        side_effect=[URLError("temporary"), response],
+    ) as urlopen:
+        assert generator.generate("hello") == "network recovered"
+
+    assert urlopen.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("max_retries", "retry_backoff_seconds"),
+    [(-1, 0), (1, -0.1)],
+)
+def test_openai_compatible_generator_rejects_invalid_retry_settings(
+    max_retries: int,
+    retry_backoff_seconds: float,
+) -> None:
+    with pytest.raises(ValueError):
+        OpenAICompatibleTextGenerator(
+            base_url="http://localhost:8000",
+            model="test-model",
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
