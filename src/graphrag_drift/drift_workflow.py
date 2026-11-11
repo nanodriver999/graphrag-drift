@@ -22,6 +22,7 @@ class DriftWorkflowState(TypedDict, total=False):
     primer_folds: int
     primer_concurrency: int
     max_step_retries: int
+    resume_requested: bool
 
     primer_answer: str
     primer_score: int
@@ -566,6 +567,27 @@ def build_drift_workflow(
             retry_target="reduce",
         )
 
+    def route_from_start(state: DriftWorkflowState) -> str:
+        if not state.get("resume_requested"):
+            return "prepare_primer"
+
+        if state.get("status") == "completed":
+            return "done"
+
+        failed_step = str(state.get("failed_step") or "")
+        if failed_step == "prepare_primer":
+            return "prepare_primer"
+        if failed_step.startswith("primer_fold:"):
+            return "execute_primer_fold"
+        if failed_step == "aggregate_primer":
+            return "aggregate_primer"
+        if failed_step.startswith("action:"):
+            return "execute_action"
+        if failed_step == "reduce":
+            return "reduce"
+
+        return "prepare_primer"
+
     graph = StateGraph(DriftWorkflowState)
     graph.add_node("prepare_primer", prepare_primer)
     graph.add_node("execute_primer_fold", execute_primer_fold)
@@ -577,7 +599,18 @@ def build_drift_workflow(
     graph.add_node("reduce", reduce_answer)
     graph.add_node("fail", fail_run)
 
-    graph.add_edge(START, "prepare_primer")
+    graph.add_conditional_edges(
+        START,
+        route_from_start,
+        {
+            "prepare_primer": "prepare_primer",
+            "execute_primer_fold": "execute_primer_fold",
+            "aggregate_primer": "aggregate_primer",
+            "execute_action": "execute_action",
+            "reduce": "reduce",
+            "done": END,
+        },
+    )
     graph.add_conditional_edges(
         "prepare_primer",
         after_prepare_primer,
@@ -659,6 +692,45 @@ def materialize_drift_result(state: DriftWorkflowState) -> dict[str, Any]:
     return result
 
 
+def resume_drift_workflow(
+    workflow: Any,
+    *,
+    config: dict[str, Any],
+    reset_failed_step_retries: bool = True,
+) -> dict[str, Any]:
+    """Resume a previously checkpointed failed DRIFT run.
+
+    The latest checkpoint is loaded from the workflow's checkpointer. Completed
+    primer folds/actions remain in state; only the failed step is routed again.
+    """
+
+    snapshot = workflow.get_state(config)
+    values = dict(snapshot.values)
+    if not values:
+        raise ValueError("No checkpointed DRIFT state exists for this thread")
+
+    if values.get("status") == "completed":
+        return materialize_drift_result(values)
+
+    failed_step = str(values.get("failed_step") or "")
+    if not failed_step:
+        raise ValueError("Checkpointed DRIFT run has no failed step to resume")
+
+    retry_counts = dict(values.get("retry_counts", {}))
+    if reset_failed_step_retries:
+        retry_counts[failed_step] = 0
+
+    resumed = workflow.invoke(
+        {
+            "resume_requested": True,
+            "status": "running",
+            "retry_counts": retry_counts,
+        },
+        config=config,
+    )
+    return materialize_drift_result(resumed)
+
+
 def run_drift_workflow(
     engine: GraphRAGEngine,
     query: str,
@@ -688,6 +760,7 @@ def run_drift_workflow(
         "primer_folds": primer_folds,
         "primer_concurrency": primer_concurrency,
         "max_step_retries": max_step_retries,
+        "resume_requested": False,
         "retry_counts": {},
         "primer_report_folds": [],
         "primer_fold_results": {},
