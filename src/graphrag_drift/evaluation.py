@@ -30,6 +30,14 @@ class InstrumentedTextGenerator:
             self.call_count = 0
             self.total_seconds = 0.0
             self.prompts.clear()
+        reset = getattr(self.generator, "reset_model_usage", None)
+        if callable(reset):
+            reset()
+
+    def successful_model_usage(self) -> dict[str, int] | None:
+        """Return actual successful provider model IDs when supported."""
+        getter = getattr(self.generator, "successful_model_usage", None)
+        return getter() if callable(getter) else None
 
     def generate(self, prompt: str) -> str:
         if self._semaphore is None:
@@ -87,6 +95,13 @@ class GraphRAGModeBenchmark:
             "unique_evidence_count": unique_evidence_count,
             "answer": str(result.get("answer") or ""),
         }
+        usage = self.generator_probe.successful_model_usage()
+        if usage is not None:
+            metrics["successful_model_calls"] = usage
+            primary = getattr(self.generator_probe.generator, "model", "")
+            metrics["used_fallback_model"] = any(
+                model != primary for model in usage
+            )
         if mode == "global":
             metrics["map_concurrency"] = int(result.get("map_concurrency", 1))
             metrics["reduce_char_budget"] = int(result.get("reduce_char_budget", 0))
