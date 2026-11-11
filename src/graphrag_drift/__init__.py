@@ -6,6 +6,12 @@ from .query_expansion import LLMQueryExpandingRetriever
 from .cached_retrieval import CachedCommunityReportRetriever
 from .community_report_store import FileCommunityReportStore
 from .core import GraphRAGEngine
+from .drift_workflow import (
+    DriftWorkflowState,
+    build_drift_workflow,
+    materialize_drift_result,
+    run_drift_workflow,
+)
 from .drift_profiles import (
     DRIFT_SEARCH_PROFILES,
     DriftSearchProfile,
@@ -22,6 +28,7 @@ __all__ = [
     "GlobalLLMReasoner",
     "GlobalSearchLLMSettings",
     "DRIFT_SEARCH_PROFILES",
+    "DriftWorkflowState",
     "DriftSearchProfile",
     "GraphRAGEngine",
     "GraphRAGLLMReasoner",
@@ -34,5 +41,7 @@ __all__ = [
     "OpenAICompatibleTextGenerator",
     "Retriever",
     "get_drift_search_profile",
+    "materialize_drift_result",
     "resolve_drift_search_profile",
+    "run_drift_workflow",
 ]
