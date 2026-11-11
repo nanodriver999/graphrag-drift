@@ -9,6 +9,7 @@ from graphrag_drift.drift_workflow import (
     build_drift_workflow,
     resume_drift_workflow,
     run_drift_workflow,
+    run_or_resume_drift_workflow,
 )
 from graphrag_drift.llm import DeterministicReasoner
 from graphrag_drift.models import CommunityReport, DriftActionResult, DriftPrimerResult, SearchHit
@@ -144,3 +145,47 @@ def test_resume_completed_sqlite_thread_returns_existing_result(
     assert completed["status"] == "completed"
     assert resumed["status"] == "completed"
     assert resumed["answer"] == completed["answer"]
+
+
+def test_run_or_resume_reuses_completed_thread_without_llm_calls(
+    tmp_path: Path,
+) -> None:
+    checkpoint_path = tmp_path / "reuse.sqlite"
+    config = {"configurable": {"thread_id": "reuse-run"}}
+    engine = GraphRAGEngine(Retriever(), DeterministicReasoner())
+
+    with open_sqlite_checkpointer(checkpoint_path) as saver:
+        first = run_or_resume_drift_workflow(
+            engine,
+            "root",
+            top_k=1,
+            max_depth=1,
+            max_actions_per_depth=1,
+            community_top_k=0,
+            action_concurrency=1,
+            primer_folds=1,
+            primer_concurrency=1,
+            max_step_retries=0,
+            checkpointer=saver,
+            config=config,
+        )
+        second = run_or_resume_drift_workflow(
+            engine,
+            "root",
+            top_k=1,
+            max_depth=1,
+            max_actions_per_depth=1,
+            community_top_k=0,
+            action_concurrency=1,
+            primer_folds=1,
+            primer_concurrency=1,
+            max_step_retries=0,
+            checkpointer=saver,
+            config=config,
+        )
+
+    assert first["status"] == "completed"
+    assert first["checkpoint_reused"] is False
+    assert second["status"] == "completed"
+    assert second["checkpoint_reused"] is True
+    assert second["answer"] == first["answer"]
