@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -43,10 +44,10 @@ class ScriptedReasoner(DeterministicReasoner):
         return DriftActionResult(f"answer {action_query}", 60, [])
 
 
-class FlakyActionReasoner(ScriptedReasoner):
+class FlakySecondActionReasoner(ScriptedReasoner):
     def __init__(self) -> None:
-        self.failures_remaining = 1
-        self.action_attempts = 0
+        self.attempts: Counter[str] = Counter()
+        self.q2_failures_remaining = 1
 
     def answer_drift_action(
         self,
@@ -56,9 +57,9 @@ class FlakyActionReasoner(ScriptedReasoner):
         *,
         depth: int,
     ) -> DriftActionResult:
-        self.action_attempts += 1
-        if self.failures_remaining:
-            self.failures_remaining -= 1
+        self.attempts[action_query] += 1
+        if action_query == "q2" and self.q2_failures_remaining:
+            self.q2_failures_remaining -= 1
             raise TimeoutError("temporary provider timeout")
         return super().answer_drift_action(
             global_query,
@@ -93,8 +94,8 @@ def test_resumable_workflow_matches_ranked_drift_shape() -> None:
     assert result["answer"].startswith("DRIFT[root]:")
 
 
-def test_failed_epoch_is_retried_without_restarting_primer() -> None:
-    reasoner = FlakyActionReasoner()
+def test_failed_action_retries_only_that_action() -> None:
+    reasoner = FlakySecondActionReasoner()
     engine = GraphRAGEngine(Retriever(), reasoner)
 
     result = run_drift_workflow(
@@ -102,7 +103,7 @@ def test_failed_epoch_is_retried_without_restarting_primer() -> None:
         "root",
         top_k=1,
         max_depth=1,
-        max_actions_per_depth=1,
+        max_actions_per_depth=2,
         community_top_k=0,
         action_concurrency=1,
         primer_folds=1,
@@ -111,12 +112,13 @@ def test_failed_epoch_is_retried_without_restarting_primer() -> None:
     )
 
     assert result["status"] == "completed"
-    assert result["retry_counts"]["execute_epoch"] == 1
+    assert result["retry_counts"]["action:q2"] == 1
     assert result["failed_step"] == ""
-    assert reasoner.action_attempts == 2
+    assert reasoner.attempts["q1"] == 1
+    assert reasoner.attempts["q2"] == 2
 
 
-def test_retry_exhaustion_returns_failed_checkpointed_state() -> None:
+def test_retry_exhaustion_returns_failed_checkpointed_action_state() -> None:
     class AlwaysFailReasoner(ScriptedReasoner):
         def answer_drift_action(
             self,
@@ -141,12 +143,13 @@ def test_retry_exhaustion_returns_failed_checkpointed_state() -> None:
     )
 
     assert result["status"] == "failed"
-    assert result["current_step"] == "execute_epoch"
-    assert result["retry_counts"]["execute_epoch"] == 2
+    assert result["current_step"] == "action:q1"
+    assert result["retry_counts"]["action:q1"] == 2
+    assert result["current_action_query"] == "q1"
     assert "TimeoutError" in result["last_error"]
 
 
-def test_langgraph_checkpointer_records_intermediate_states() -> None:
+def test_langgraph_checkpointer_records_each_action_checkpoint() -> None:
     engine = GraphRAGEngine(Retriever(), ScriptedReasoner())
     checkpointer = InMemorySaver()
     workflow = build_drift_workflow(engine, checkpointer=checkpointer)
@@ -157,13 +160,15 @@ def test_langgraph_checkpointer_records_intermediate_states() -> None:
             "query": "root",
             "top_k": 1,
             "max_depth": 1,
-            "max_actions_per_depth": 1,
+            "max_actions_per_depth": 2,
             "community_top_k": 0,
             "action_concurrency": 1,
             "primer_folds": 1,
             "primer_concurrency": 1,
             "max_step_retries": 1,
             "retry_counts": {},
+            "epoch_queue": [],
+            "current_action_query": "",
             "status": "running",
             "current_step": "start",
             "last_error": "",
@@ -173,11 +178,14 @@ def test_langgraph_checkpointer_records_intermediate_states() -> None:
     )
 
     history = list(workflow.get_state_history(config))
+    action_snapshots = [
+        snapshot
+        for snapshot in history
+        if str(snapshot.values.get("current_step", "")).startswith("action:")
+    ]
 
     assert result["status"] == "completed"
-    assert len(history) >= 4
-    assert any(snapshot.values.get("current_step") == "primer" for snapshot in history)
-    assert any(
-        snapshot.values.get("current_step") == "execute_epoch"
-        for snapshot in history
-    )
+    assert len(action_snapshots) >= 2
+    action_steps = {snapshot.values.get("current_step") for snapshot in action_snapshots}
+    assert "action:q1" in action_steps
+    assert "action:q2" in action_steps
