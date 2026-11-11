@@ -8,6 +8,9 @@ INSUFFICIENT_MARKERS = (
     "증거만으로는",
     "근거가 부족",
     "확인할 수 없습니다",
+    "특정할 수 없습니다",
+    "명시되어 있지 않습니다",
+    "불명확합니다",
     "insufficient evidence",
     "no relevant",
 )
