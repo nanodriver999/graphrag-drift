@@ -93,6 +93,18 @@ class GraphRAGModeBenchmark:
             metrics["reduce_partial_count"] = int(result.get("reduce_partial_count", 0))
             metrics["reduce_char_count"] = int(result.get("reduce_char_count", 0))
         if mode == "drift":
+            # A DRIFT run contains fetched evidence plus LLM-synthesized primer
+            # and action responses. Do not report the latter as retrieved facts.
+            fetched = [
+                hit for hit in result.get("evidence", [])
+                if hit.id != "drift-primer"
+                and not hit.id.startswith("drift-action:")
+            ]
+            metrics["retrieved_evidence_count"] = len(fetched)
+            metrics["unique_retrieved_evidence_count"] = len(
+                {hit.id for hit in fetched}
+            )
+            metrics["synthesized_context_count"] = evidence_count - len(fetched)
             metrics["depth"] = int(result.get("depth", 0))
             metrics["remaining_followups"] = len(result.get("followups", []))
             metrics["primer_source"] = str(result.get("primer_source") or "")
