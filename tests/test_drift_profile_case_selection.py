@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from graphrag_drift.benchmark_suite import BenchmarkCase
-from scripts.run_drift_profile_comparison import select_benchmark_cases
+from graphrag_drift.benchmark_suite import BenchmarkCase, select_benchmark_cases
 
 
 def test_select_benchmark_cases_retains_dataset_order() -> None:
