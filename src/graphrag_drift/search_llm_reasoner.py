@@ -7,28 +7,71 @@ from .global_llm_reasoner import GlobalLLMReasoner
 from .models import CommunityReport, DriftActionResult, DriftPrimerResult, SearchHit
 
 
-def _format_evidence(evidence: list[SearchHit], *, limit: int = 20) -> str:
+def _bounded_rows(
+    items: list[tuple[str, str]],
+    *,
+    separator: str,
+    max_chars: int,
+    max_item_chars: int = 6000,
+) -> str:
+    """Bound total prompt evidence, not just individual items.
+
+    This prevents a large DRIFT frontier from generating a context much longer
+    than a free OpenAI-compatible provider can reliably process.
+    """
+    if max_chars < 128:
+        raise ValueError("max_chars must be >= 128")
+    rows: list[str] = []
+    used = 0
+    for header, original in items:
+        overhead = len(separator) if rows else 0
+        available = max_chars - used - overhead - len(header) - 1
+        if available < 32:
+            break
+        text = original.strip()
+        text_budget = min(available, max_item_chars)
+        if len(text) > text_budget:
+            text = text[:text_budget - 3] + "..."
+        row = f"{header}\n{text}"
+        rows.append(row)
+        used += overhead + len(row)
+    return separator.join(rows)
+
+
+def _format_evidence(
+    evidence: list[SearchHit],
+    *,
+    limit: int = 20,
+    max_chars: int = 16000,
+) -> str:
     unique: dict[str, SearchHit] = {}
     for hit in evidence:
         unique.setdefault(hit.id, hit)
 
-    rows: list[str] = []
-    for hit in list(unique.values())[:limit]:
-        text = hit.text.strip()
-        if len(text) > 6000:
-            text = text[:6000] + "..."
-        rows.append(f"[{hit.id}] score={hit.score:.4f}\n{text}")
-    return "\n\n--- EVIDENCE ---\n\n".join(rows)
+    return _bounded_rows(
+        [
+            (f"[{hit.id}] score={hit.score:.4f}", hit.text)
+            for hit in list(unique.values())[:limit]
+        ],
+        separator="\n\n--- EVIDENCE ---\n\n",
+        max_chars=max_chars,
+    )
 
 
-def _format_reports(reports: list[CommunityReport], *, limit: int = 20) -> str:
-    rows: list[str] = []
-    for report in reports[:limit]:
-        text = report.summary.strip()
-        if len(text) > 6000:
-            text = text[:6000] + "..."
-        rows.append(f"[{report.id}] score={report.score:.4f}\n{text}")
-    return "\n\n--- COMMUNITY REPORT ---\n\n".join(rows)
+def _format_reports(
+    reports: list[CommunityReport],
+    *,
+    limit: int = 20,
+    max_chars: int = 16000,
+) -> str:
+    return _bounded_rows(
+        [
+            (f"[{report.id}] score={report.score:.4f}", report.summary)
+            for report in reports[:limit]
+        ],
+        separator="\n\n--- COMMUNITY REPORT ---\n\n",
+        max_chars=max_chars,
+    )
 
 
 @dataclass
@@ -228,6 +271,6 @@ class GraphRAGLLMReasoner(GlobalLLMReasoner):
             "Resolve overlaps, avoid duplication, and preserve uncertainty where evidence is incomplete.\n"
             "Do not introduce facts absent from the evidence.\n\n"
             f"Original query:\n{query}\n\n"
-            f"Accumulated evidence:\n{_format_evidence(evidence)}\n"
+            f"Accumulated evidence:\n{_format_evidence(evidence, max_chars=24000)}\n"
         )
         return self.generator.generate(prompt).strip()

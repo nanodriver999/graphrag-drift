@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from graphrag_drift.models import CommunityReport, SearchHit
-from graphrag_drift.search_llm_reasoner import GraphRAGLLMReasoner
+from graphrag_drift.search_llm_reasoner import GraphRAGLLMReasoner, _format_evidence, _format_reports
 
 
 @dataclass
@@ -168,3 +168,40 @@ def test_drift_action_reasoning_falls_back_to_best_hit_on_invalid_json() -> None
     assert result.response == "best evidence"
     assert result.score == 90
     assert result.follow_up_queries == []
+
+
+def test_drift_evidence_budget_limits_total_chars() -> None:
+    hits = [
+        SearchHit(f"chunk:{index}", "원자력 안전 조문 " * 1000, 0.9)
+        for index in range(20)
+    ]
+    rendered = _format_evidence(hits, max_chars=16000)
+    assert len(rendered) <= 16000
+    assert "[chunk:0]" in rendered
+    assert "[chunk:1]" in rendered
+    assert "[chunk:19]" not in rendered
+
+
+def test_drift_report_budget_limits_total_chars() -> None:
+    reports = [
+        CommunityReport(f"report:{i}", "long community report " * 500, 0.8)
+        for i in range(20)
+    ]
+    rendered = _format_reports(reports, max_chars=16000)
+    assert len(rendered) <= 16000
+    assert "[report:0]" in rendered
+    assert "[report:19]" not in rendered
+
+
+def test_drift_action_prompt_is_bounded_even_for_many_long_hits() -> None:
+    generator = FakeGenerator(
+        responses=['{"response":"answer","score":70,"follow_up_queries":[]}']
+    )
+    reasoner = GraphRAGLLMReasoner(generator=generator)
+    hits = [
+        SearchHit(f"chunk:{index}", "매우 긴 법령 본문" * 2000, 0.9)
+        for index in range(20)
+    ]
+    result = reasoner.answer_drift_action("global", "action", hits, depth=1)
+    assert result.response == "answer"
+    assert len(generator.prompts[0]) < 17000
