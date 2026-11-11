@@ -23,6 +23,7 @@ from graphrag_drift.drift_profile_comparison import (
 )
 from graphrag_drift.evaluation import GraphRAGModeBenchmark, InstrumentedTextGenerator
 from graphrag_drift.neo4j_graphrag_retrieval import Neo4jGraphRAGRetriever
+from graphrag_drift.profile_progress import ProfileBenchmarkProgress
 
 
 def _generator() -> OpenAICompatibleTextGenerator:
@@ -70,6 +71,7 @@ def main() -> None:
         help="Maximum concurrent LLM requests sent to the provider.",
     )
     parser.add_argument("--checkpoint-db", default=None)
+    parser.add_argument("--progress-json", default=None)
     parser.add_argument("--run-id", default="drift-profile-comparison")
     parser.add_argument("--max-step-retries", type=int, default=1)
     parser.add_argument("--output-json", default=None)
@@ -86,6 +88,11 @@ def main() -> None:
         open_sqlite_checkpointer(args.checkpoint_db)
         if args.checkpoint_db
         else nullcontext(None)
+    )
+    progress = (
+        ProfileBenchmarkProgress.load(args.progress_json)
+        if args.progress_json
+        else None
     )
     try:
         profile_runs: dict[str, dict] = {}
@@ -116,21 +123,27 @@ def main() -> None:
                     _benchmark=benchmark,
                     _engine=engine,
                 ) -> dict:
+                    fingerprint_payload = {
+                        "query": query,
+                        "profile": _profile.serialize(),
+                        "top_k": args.drift_top_k,
+                    }
+                    fingerprint = hashlib.sha256(
+                        json.dumps(
+                            fingerprint_payload,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ).encode("utf-8")
+                    ).hexdigest()[:16]
+                    thread_id = f"{args.run_id}:{_profile.name}:{fingerprint}"
+
+                    if progress is not None:
+                        cached = progress.get(thread_id)
+                        if cached is not None:
+                            return cached
+
                     drift_executor = None
                     if checkpointer is not None:
-                        fingerprint_payload = {
-                            "query": query,
-                            "profile": _profile.serialize(),
-                            "top_k": args.drift_top_k,
-                        }
-                        fingerprint = hashlib.sha256(
-                            json.dumps(
-                                fingerprint_payload,
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ).encode("utf-8")
-                        ).hexdigest()[:16]
-                        thread_id = f"{args.run_id}:{_profile.name}:{fingerprint}"
                         config = {"configurable": {"thread_id": thread_id}}
 
                         def drift_executor() -> dict:
@@ -156,7 +169,7 @@ def main() -> None:
                                 )
                             return result
 
-                    return _benchmark.run_drift_only(
+                    measured = _benchmark.run_drift_only(
                         query,
                         drift_top_k=args.drift_top_k,
                         drift_profile=_profile.name,
@@ -169,6 +182,9 @@ def main() -> None:
                         drift_primer_concurrency=_profile.primer_concurrency,
                         drift_executor=drift_executor,
                     )
+                    if progress is not None:
+                        progress.put(thread_id, measured)
+                    return measured
 
                 profile_runs[profile.name] = run_benchmark_suite(cases, runner)
 
