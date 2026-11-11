@@ -259,3 +259,55 @@ def test_drift_evidence_metrics_exclude_generated_primer_and_actions() -> None:
     assert row["retrieved_evidence_count"] == 3
     assert row["unique_retrieved_evidence_count"] == 2
     assert row["synthesized_context_count"] == 2
+
+
+class ModelUsageGenerator:
+    model = "primary"
+
+    def __init__(self) -> None:
+        self.models: dict[str, int] = {}
+
+    def reset_model_usage(self) -> None:
+        self.models.clear()
+
+    def successful_model_usage(self) -> dict[str, int]:
+        return dict(self.models)
+
+    def generate(self, prompt: str) -> str:
+        model = "fallback" if "fallback" in prompt else "primary"
+        self.models[model] = self.models.get(model, 0) + 1
+        return "answer"
+
+
+def test_drift_benchmark_records_actual_successful_models_and_resets() -> None:
+    base = ModelUsageGenerator()
+    probe = InstrumentedTextGenerator(base)
+    engine = GraphRAGEngine(retriever=FakeRetriever(), reasoner=DeterministicReasoner())
+    benchmark = GraphRAGModeBenchmark(
+        local_engine=engine,
+        global_engine=engine,
+        drift_engine=engine,
+        generator_probe=probe,
+    )
+
+    first = benchmark.run_drift_only(
+        "question",
+        drift_executor=lambda: {
+            "answer": probe.generate("call fallback"),
+            "evidence": [],
+        },
+    )["results"][0]
+    assert first["llm_calls"] == 1
+    assert first["successful_model_calls"] == {"fallback": 1}
+    assert first["used_fallback_model"] is True
+
+    second = benchmark.run_drift_only(
+        "question",
+        drift_executor=lambda: {
+            "answer": probe.generate("call primary"),
+            "evidence": [],
+        },
+    )["results"][0]
+    assert second["llm_calls"] == 1
+    assert second["successful_model_calls"] == {"primary": 1}
+    assert second["used_fallback_model"] is False
