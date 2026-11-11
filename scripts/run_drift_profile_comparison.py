@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+from contextlib import nullcontext
 from pathlib import Path
 
 from graphrag_drift import (
@@ -10,6 +12,8 @@ from graphrag_drift import (
     GraphRAGLLMReasoner,
     OpenAICompatibleTextGenerator,
     get_drift_search_profile,
+    open_sqlite_checkpointer,
+    run_or_resume_drift_workflow,
 )
 from graphrag_drift.benchmark_suite import load_benchmark_cases, run_benchmark_suite
 from graphrag_drift.config import Neo4jSettings
@@ -65,6 +69,9 @@ def main() -> None:
         default=1,
         help="Maximum concurrent LLM requests sent to the provider.",
     )
+    parser.add_argument("--checkpoint-db", default=None)
+    parser.add_argument("--run-id", default="drift-profile-comparison")
+    parser.add_argument("--max-step-retries", type=int, default=1)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
     args = parser.parse_args()
@@ -75,42 +82,95 @@ def main() -> None:
 
     base_generator = _generator()
     base = Neo4jGraphRAGRetriever.from_settings(Neo4jSettings.from_env())
+    checkpoint_context = (
+        open_sqlite_checkpointer(args.checkpoint_db)
+        if args.checkpoint_db
+        else nullcontext(None)
+    )
     try:
         profile_runs: dict[str, dict] = {}
 
-        for profile_name in args.profiles:
-            profile = get_drift_search_profile(profile_name)
-            probe = InstrumentedTextGenerator(
-                base_generator,
-                max_concurrent_requests=args.provider_max_inflight,
-            )
-            reasoner = GraphRAGLLMReasoner(
-                generator=probe,
-                max_followups=profile.max_followups,
-            )
-            engine = GraphRAGEngine(base, reasoner)
-            benchmark = GraphRAGModeBenchmark(
-                local_engine=engine,
-                global_engine=engine,
-                drift_engine=engine,
-                generator_probe=probe,
-            )
-
-            def runner(query: str, *, _profile=profile, _benchmark=benchmark) -> dict:
-                return _benchmark.run_drift_only(
-                    query,
-                    drift_top_k=args.drift_top_k,
-                    drift_profile=_profile.name,
-                    drift_max_followups=_profile.max_followups,
-                    drift_max_depth=_profile.max_depth,
-                    drift_max_actions_per_depth=_profile.max_actions_per_depth,
-                    drift_community_top_k=_profile.community_top_k,
-                    drift_action_concurrency=_profile.action_concurrency,
-                    drift_primer_folds=_profile.primer_folds,
-                    drift_primer_concurrency=_profile.primer_concurrency,
+        with checkpoint_context as checkpointer:
+            for profile_name in args.profiles:
+                profile = get_drift_search_profile(profile_name)
+                probe = InstrumentedTextGenerator(
+                    base_generator,
+                    max_concurrent_requests=args.provider_max_inflight,
+                )
+                reasoner = GraphRAGLLMReasoner(
+                    generator=probe,
+                    max_followups=profile.max_followups,
+                )
+                engine = GraphRAGEngine(base, reasoner)
+                benchmark = GraphRAGModeBenchmark(
+                    local_engine=engine,
+                    global_engine=engine,
+                    drift_engine=engine,
+                    generator_probe=probe,
                 )
 
-            profile_runs[profile.name] = run_benchmark_suite(cases, runner)
+                def runner(
+                    query: str,
+                    *,
+                    _profile=profile,
+                    _benchmark=benchmark,
+                    _engine=engine,
+                ) -> dict:
+                    drift_executor = None
+                    if checkpointer is not None:
+                        fingerprint_payload = {
+                            "query": query,
+                            "profile": _profile.serialize(),
+                            "top_k": args.drift_top_k,
+                        }
+                        fingerprint = hashlib.sha256(
+                            json.dumps(
+                                fingerprint_payload,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ).encode("utf-8")
+                        ).hexdigest()[:16]
+                        thread_id = f"{args.run_id}:{_profile.name}:{fingerprint}"
+                        config = {"configurable": {"thread_id": thread_id}}
+
+                        def drift_executor() -> dict:
+                            result = run_or_resume_drift_workflow(
+                                _engine,
+                                query,
+                                top_k=args.drift_top_k,
+                                max_depth=_profile.max_depth,
+                                max_actions_per_depth=_profile.max_actions_per_depth,
+                                community_top_k=_profile.community_top_k,
+                                action_concurrency=_profile.action_concurrency,
+                                primer_folds=_profile.primer_folds,
+                                primer_concurrency=_profile.primer_concurrency,
+                                max_step_retries=args.max_step_retries,
+                                checkpointer=checkpointer,
+                                config=config,
+                            )
+                            if result.get("status") == "failed":
+                                raise RuntimeError(
+                                    "Checkpointed DRIFT step failed: "
+                                    f"{result.get('failed_step')}: "
+                                    f"{result.get('last_error')}"
+                                )
+                            return result
+
+                    return _benchmark.run_drift_only(
+                        query,
+                        drift_top_k=args.drift_top_k,
+                        drift_profile=_profile.name,
+                        drift_max_followups=_profile.max_followups,
+                        drift_max_depth=_profile.max_depth,
+                        drift_max_actions_per_depth=_profile.max_actions_per_depth,
+                        drift_community_top_k=_profile.community_top_k,
+                        drift_action_concurrency=_profile.action_concurrency,
+                        drift_primer_folds=_profile.primer_folds,
+                        drift_primer_concurrency=_profile.primer_concurrency,
+                        drift_executor=drift_executor,
+                    )
+
+                profile_runs[profile.name] = run_benchmark_suite(cases, runner)
 
         result = compare_drift_profiles(
             profile_runs,
