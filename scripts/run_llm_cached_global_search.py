@@ -24,6 +24,7 @@ def main() -> None:
     )
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--map-concurrency", type=int, default=4)
+    parser.add_argument("--reduce-char-budget", type=int, default=24000)
     args = parser.parse_args()
 
     settings = GlobalSearchLLMSettings.from_env()
@@ -32,6 +33,7 @@ def main() -> None:
         args.query,
         top_k=args.top_k,
         map_concurrency=args.map_concurrency,
+        reduce_char_budget=args.reduce_char_budget,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

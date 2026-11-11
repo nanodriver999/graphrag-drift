@@ -35,6 +35,7 @@ def render_benchmark_markdown(result: dict[str, Any]) -> str:
         f"- Local text-unit proportion: {settings.get('local_text_unit_prop', '-')}",
         f"- Global top-k: {settings.get('global_top_k', '-')}",
         f"- Global map concurrency: {settings.get('global_map_concurrency', '-')}",
+        f"- Global reduce char budget: {settings.get('global_reduce_char_budget', '-')}",
         f"- DRIFT top-k: {settings.get('drift_top_k', '-')}",
         f"- DRIFT profile: {settings.get('drift_profile', '-')}",
         f"- DRIFT max follow-ups/action: {settings.get('drift_max_followups', '-')}",

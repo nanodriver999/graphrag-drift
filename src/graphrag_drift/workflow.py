@@ -18,6 +18,7 @@ class GraphRAGState(TypedDict, total=False):
     mode: SearchMode
     top_k: int
     global_map_concurrency: int
+    global_reduce_char_budget: int
     max_depth: int
     max_actions_per_depth: int
     community_top_k: int
@@ -63,6 +64,7 @@ def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
             state["query"],
             top_k=state.get("top_k", 5),
             map_concurrency=state.get("global_map_concurrency", 4),
+            reduce_char_budget=state.get("global_reduce_char_budget", 24000),
         )
 
     def drift_ranked_search(state: GraphRAGState) -> GraphRAGState:
