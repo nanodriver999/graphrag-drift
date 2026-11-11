@@ -7,6 +7,7 @@ import pytest
 from graphrag_drift.opencode_model_selector import (
     ModelCandidate,
     select_working_model,
+    select_working_models,
     zero_cost_candidates,
 )
 
@@ -108,3 +109,67 @@ def test_selector_fails_when_all_zero_cost_models_are_unavailable() -> None:
             FakeClient(broken_models={"broken-free", "working-free"}),
             provider_payload(),
         )
+
+
+@dataclass
+class WorkloadProbeClient:
+    broken_models: set[str]
+
+    def request(self, path: str, *, method: str = "GET", body: dict | None = None):
+        if path == "/session":
+            return {"id": "session-1"}
+        if path.startswith("/session/") and path.endswith("/message"):
+            model_id = body["model"]["modelID"]
+            if model_id in self.broken_models:
+                raise TimeoutError("workload timeout")
+            prompt = body["parts"][0]["text"]
+            if "GraphRAG DRIFT-style" in prompt:
+                return {
+                    "parts": [
+                        {
+                            "type": "text",
+                            "text": (
+                                '{"intermediate_answer":"grounded","score":80,'
+                                '"follow_up_queries":["q1","q2"]}'
+                            ),
+                        }
+                    ]
+                }
+            return {"parts": [{"type": "text", "text": "OPENCODE_MODEL_OK"}]}
+        raise AssertionError(path)
+
+
+def test_selector_workload_probe_returns_viable_fallback_order() -> None:
+    payload = provider_payload()
+    selected, attempts = select_working_models(
+        WorkloadProbeClient(broken_models=set()),
+        payload,
+        preferred_model_ids=["working-free", "broken-free"],
+        max_models=2,
+        workload_probe=True,
+    )
+
+    assert [item.model_id for item in selected] == [
+        "working-free",
+        "broken-free",
+    ]
+    assert selected[0].qualified_id == "opencode/working-free"
+    selected_attempt = next(
+        row for row in attempts if row["model_id"] == "working-free"
+    )
+    assert selected_attempt["status"] == "selected"
+    assert "grounded" in selected_attempt["workload_response"]
+
+
+def test_selector_skips_model_that_times_out_on_workload_probe() -> None:
+    selected, attempts = select_working_models(
+        WorkloadProbeClient(broken_models={"working-free"}),
+        provider_payload(),
+        preferred_model_ids=["working-free", "broken-free"],
+        max_models=1,
+        workload_probe=True,
+    )
+
+    assert selected[0].model_id == "broken-free"
+    assert attempts[0]["model_id"] == "working-free"
+    assert "TimeoutError" in attempts[0]["error"]

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from graphrag_drift.opencode_model_selector import (
     OpenCodeClient,
-    select_working_model,
+    select_working_models,
 )
 
 
@@ -21,7 +21,9 @@ def main() -> None:
         dest="preferred_models",
         default=[],
     )
-    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--timeout", type=float, default=60)
+    parser.add_argument("--max-models", type=int, default=3)
+    parser.add_argument("--skip-workload-probe", action="store_true")
     parser.add_argument("--output", default=None)
     parser.add_argument("--github-env", default=None)
     args = parser.parse_args()
@@ -31,14 +33,18 @@ def main() -> None:
     if not isinstance(payload, dict):
         raise RuntimeError("OpenCode /provider returned a non-object response")
 
-    selected, attempts = select_working_model(
+    selected_models, attempts = select_working_models(
         client,
         payload,
         preferred_model_ids=args.preferred_models,
+        max_models=args.max_models,
+        workload_probe=not args.skip_workload_probe,
     )
+    selected = selected_models[0]
     result = {
-        "format": "graphrag-drift-opencode-model-selection-v1",
+        "format": "graphrag-drift-opencode-model-selection-v2",
         "selected": selected.serialize(),
+        "fallbacks": [item.serialize() for item in selected_models[1:]],
         "attempts": attempts,
     }
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
@@ -54,6 +60,10 @@ def main() -> None:
             out.write(f"OPENCODE_PROVIDER_ID={selected.provider_id}\n")
             out.write(f"OPENCODE_MODEL_ID={selected.model_id}\n")
             out.write(f"OPENAI_COMPATIBLE_MODEL={selected.model_id}\n")
+            fallbacks = ",".join(
+                item.qualified_id for item in selected_models[1:]
+            )
+            out.write(f"OPENAI_COMPATIBLE_MODEL_FALLBACKS={fallbacks}\n")
 
 
 if __name__ == "__main__":

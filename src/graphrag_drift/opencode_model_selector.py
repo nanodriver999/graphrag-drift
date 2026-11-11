@@ -6,6 +6,22 @@ from dataclasses import dataclass
 from typing import Any
 
 
+WORKLOAD_PROBE_PROMPT = """You are testing whether an LLM can handle a GraphRAG DRIFT-style reasoning request.
+Read the evidence below and return ONLY valid JSON with keys:
+intermediate_answer (string), score (integer 0-100), follow_up_queries (array of strings).
+
+Question: What duties and delegation relationships are described for a radiation safety manager?
+
+Evidence:
+- A radiation safety manager is appointed before regulated use begins and the appointment is reported.
+- Some radiation-safety-management work may be delegated to a registered service provider.
+- When the responsible person is absent, a qualified substitute may need to be designated.
+- Inspection and compliance obligations can depend on the applicable statute and effective date.
+
+Use only this evidence. Include 2 concise follow-up queries.
+"""
+
+
 class OpenCodeClient:
     def __init__(self, base_url: str, timeout_seconds: float) -> None:
         self.base_url = base_url.rstrip("/")
@@ -42,6 +58,10 @@ class ModelCandidate:
             "model_id": self.model_id,
             "name": self.name,
         }
+
+    @property
+    def qualified_id(self) -> str:
+        return f"{self.provider_id}/{self.model_id}"
 
 
 def zero_cost_candidates(
@@ -103,11 +123,12 @@ def probe_candidate(
     candidate: ModelCandidate,
     *,
     prompt: str = "Reply with exactly OPENCODE_MODEL_OK.",
+    title: str = "Zero-cost model availability probe",
 ) -> str:
     session = client.request(
         "/session",
         method="POST",
-        body={"title": "Zero-cost model availability probe"},
+        body={"title": title},
     )
     if not isinstance(session, dict) or not session.get("id"):
         raise RuntimeError("OpenCode did not return a session id")
@@ -137,42 +158,111 @@ def probe_candidate(
     return content
 
 
-def select_working_model(
+def _validate_workload_probe(response: str) -> None:
+    text = response.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError("workload probe must return a JSON object")
+    if not isinstance(payload.get("intermediate_answer"), str):
+        raise ValueError("workload probe intermediate_answer must be a string")
+    if not isinstance(payload.get("score"), int):
+        raise ValueError("workload probe score must be an integer")
+    followups = payload.get("follow_up_queries")
+    if not isinstance(followups, list) or len(followups) < 2:
+        raise ValueError("workload probe must return at least two follow-up queries")
+
+
+def select_working_models(
     client: OpenCodeClient,
     payload: dict[str, Any],
     *,
     preferred_model_ids: list[str] | None = None,
-) -> tuple[ModelCandidate, list[dict[str, str]]]:
+    max_models: int = 3,
+    workload_probe: bool = True,
+) -> tuple[list[ModelCandidate], list[dict[str, str]]]:
     candidates = zero_cost_candidates(
         payload,
         preferred_model_ids=preferred_model_ids,
     )
     if not candidates:
         raise RuntimeError("No connected zero-cost OpenCode models were found")
+    if max_models < 1:
+        raise ValueError("max_models must be >= 1")
 
-    failures: list[dict[str, str]] = []
+    selected: list[ModelCandidate] = []
+    attempts: list[dict[str, str]] = []
+
     for candidate in candidates:
         try:
-            response = probe_candidate(client, candidate)
+            quick = probe_candidate(client, candidate)
+            workload = ""
+            if workload_probe:
+                workload = probe_candidate(
+                    client,
+                    candidate,
+                    prompt=WORKLOAD_PROBE_PROMPT,
+                    title="GraphRAG workload capability probe",
+                )
+                _validate_workload_probe(workload)
         except Exception as exc:
-            failures.append(
+            attempts.append(
                 {
                     **candidate.serialize(),
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             )
             continue
-        return candidate, [
-            *failures,
+
+        selected.append(candidate)
+        attempts.append(
             {
                 **candidate.serialize(),
-                "status": "selected",
-                "response": response,
-            },
-        ]
+                "status": "viable",
+                "quick_response": quick,
+                "workload_response": workload,
+            }
+        )
+        if len(selected) >= max_models:
+            break
 
-    details = "; ".join(
-        f"{item['provider_id']}/{item['model_id']}: {item['error']}"
-        for item in failures
+    if not selected:
+        details = "; ".join(
+            f"{item['provider_id']}/{item['model_id']}: {item['error']}"
+            for item in attempts
+            if "error" in item
+        )
+        raise RuntimeError(
+            f"No zero-cost OpenCode model passed the workload probe: {details}"
+        )
+
+    attempts[-1 if len(selected) == 1 else next(
+        index for index, row in enumerate(attempts)
+        if row.get("provider_id") == selected[0].provider_id
+        and row.get("model_id") == selected[0].model_id
+    )]["status"] = "selected"
+    return selected, attempts
+
+
+def select_working_model(
+    client: OpenCodeClient,
+    payload: dict[str, Any],
+    *,
+    preferred_model_ids: list[str] | None = None,
+    workload_probe: bool = False,
+) -> tuple[ModelCandidate, list[dict[str, str]]]:
+    selected, attempts = select_working_models(
+        client,
+        payload,
+        preferred_model_ids=preferred_model_ids,
+        max_models=1,
+        workload_probe=workload_probe,
     )
-    raise RuntimeError(f"No zero-cost OpenCode model passed the live probe: {details}")
+    return selected[0], attempts

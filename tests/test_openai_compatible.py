@@ -189,3 +189,47 @@ def test_openai_compatible_generator_rejects_invalid_retry_settings(
             max_retries=max_retries,
             retry_backoff_seconds=retry_backoff_seconds,
         )
+
+
+def test_openai_compatible_generator_retries_timeout_error() -> None:
+    generator = OpenAICompatibleTextGenerator(
+        base_url="http://localhost:8000",
+        model="test-model",
+        max_retries=1,
+        retry_backoff_seconds=0,
+    )
+    response = FakeResponse(
+        {"choices": [{"message": {"content": "timeout recovered"}}]}
+    )
+
+    with patch(
+        "graphrag_drift.openai_compatible.request.urlopen",
+        side_effect=[TimeoutError("slow provider"), response],
+    ) as urlopen:
+        assert generator.generate("hello") == "timeout recovered"
+
+    assert urlopen.call_count == 2
+
+
+def test_openai_compatible_generator_falls_back_after_timeout_exhaustion() -> None:
+    generator = OpenAICompatibleTextGenerator(
+        base_url="http://localhost:8000",
+        model="primary",
+        fallback_models=("opencode/fallback",),
+        max_retries=0,
+        retry_backoff_seconds=0,
+    )
+    response = FakeResponse(
+        {"choices": [{"message": {"content": "fallback answer"}}]}
+    )
+
+    with patch(
+        "graphrag_drift.openai_compatible.request.urlopen",
+        side_effect=[TimeoutError("primary timeout"), response],
+    ) as urlopen:
+        assert generator.generate("hello") == "fallback answer"
+
+    primary_body = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+    fallback_body = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+    assert primary_body["model"] == "primary"
+    assert fallback_body["model"] == "opencode/fallback"
