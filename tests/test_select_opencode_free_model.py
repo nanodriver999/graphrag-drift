@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from scripts.select_opencode_free_model import (
+from graphrag_drift.opencode_model_selector import (
     ModelCandidate,
     select_working_model,
     zero_cost_candidates,
