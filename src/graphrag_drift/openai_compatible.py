@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
+from typing import Any
 from urllib import error, request
 
 
@@ -21,6 +23,8 @@ class OpenAICompatibleTextGenerator:
     temperature: float = 0.0
     max_retries: int = 3
     retry_backoff_seconds: float = 0.5
+    _successful_models: dict[str, int] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _model_lock: Any = field(default_factory=Lock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.max_retries < 0:
@@ -29,6 +33,19 @@ class OpenAICompatibleTextGenerator:
             raise ValueError("retry_backoff_seconds must be >= 0")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be > 0")
+
+    def reset_model_usage(self) -> None:
+        """Clear per-model successful response counters for a new benchmark case."""
+        with self._model_lock:
+            self._successful_models.clear()
+
+    def successful_model_usage(self) -> dict[str, int]:
+        """Return successful chat replies by the actual requested model ID.
+
+        Failed provider attempts and transport retries are excluded.
+        """
+        with self._model_lock:
+            return dict(self._successful_models)
 
     def _endpoint(self) -> str:
         return self.base_url.rstrip("/") + "/v1/chat/completions"
@@ -103,6 +120,10 @@ class OpenAICompatibleTextGenerator:
             if not isinstance(content, str) or not content.strip():
                 raise ValueError(
                     "OpenAI-compatible response content must be non-empty text"
+                )
+            with self._model_lock:
+                self._successful_models[model] = (
+                    self._successful_models.get(model, 0) + 1
                 )
             return content
 
