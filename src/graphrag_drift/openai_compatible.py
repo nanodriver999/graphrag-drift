@@ -11,15 +11,11 @@ _RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 @dataclass(frozen=True)
 class OpenAICompatibleTextGenerator:
-    """Minimal OpenAI-compatible chat-completions adapter.
-
-    This intentionally uses only the Python standard library so the GraphRAG
-    package does not need a provider-specific SDK. It can target OpenAI,
-    LiteLLM, vLLM, or another compatible endpoint.
-    """
+    """Minimal OpenAI-compatible chat-completions adapter with retry/fallback."""
 
     base_url: str
     model: str
+    fallback_models: tuple[str, ...] = ()
     api_key: str | None = None
     timeout_seconds: float = 60.0
     temperature: float = 0.0
@@ -31,6 +27,8 @@ class OpenAICompatibleTextGenerator:
             raise ValueError("max_retries must be >= 0")
         if self.retry_backoff_seconds < 0:
             raise ValueError("retry_backoff_seconds must be >= 0")
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be > 0")
 
     def _endpoint(self) -> str:
         return self.base_url.rstrip("/") + "/v1/chat/completions"
@@ -40,9 +38,9 @@ class OpenAICompatibleTextGenerator:
         if delay > 0:
             time.sleep(delay)
 
-    def generate(self, prompt: str) -> str:
+    def _request_for_model(self, prompt: str, model: str) -> request.Request:
         payload = {
-            "model": self.model,
+            "model": model,
             "messages": [
                 {
                     "role": "user",
@@ -52,48 +50,62 @@ class OpenAICompatibleTextGenerator:
             "temperature": self.temperature,
         }
         body = json.dumps(payload).encode("utf-8")
-
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-
-        req = request.Request(
+        return request.Request(
             self._endpoint(),
             data=body,
             headers=headers,
             method="POST",
         )
 
-        data = None
+    def _request_model(self, prompt: str, model: str) -> dict:
+        req = self._request_for_model(prompt, model)
+
         for attempt in range(self.max_retries + 1):
             try:
                 with request.urlopen(req, timeout=self.timeout_seconds) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-                break
+                    return json.loads(response.read().decode("utf-8"))
             except error.HTTPError as exc:
                 retryable = exc.code in _RETRYABLE_HTTP_STATUS
                 if not retryable or attempt >= self.max_retries:
                     raise
                 self._sleep_before_retry(attempt)
-            except error.URLError:
+            except (error.URLError, TimeoutError):
                 if attempt >= self.max_retries:
                     raise
                 self._sleep_before_retry(attempt)
 
-        if data is None:
-            raise RuntimeError("OpenAI-compatible request exhausted retries")
+        raise RuntimeError("OpenAI-compatible request exhausted retries")
 
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ValueError(
-                "OpenAI-compatible response is missing choices[0].message.content"
-            ) from exc
+    def generate(self, prompt: str) -> str:
+        models = [self.model, *self.fallback_models]
+        last_error: Exception | None = None
 
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("OpenAI-compatible response content must be non-empty text")
+        for model in models:
+            try:
+                data = self._request_model(prompt, model)
+            except (error.HTTPError, error.URLError, TimeoutError) as exc:
+                last_error = exc
+                continue
 
-        return content
+            try:
+                content = data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError) as exc:
+                raise ValueError(
+                    "OpenAI-compatible response is missing choices[0].message.content"
+                ) from exc
+
+            if not isinstance(content, str) or not content.strip():
+                raise ValueError(
+                    "OpenAI-compatible response content must be non-empty text"
+                )
+            return content
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("No OpenAI-compatible model was available")
