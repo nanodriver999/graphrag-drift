@@ -189,3 +189,109 @@ def test_langgraph_checkpointer_records_each_action_checkpoint() -> None:
     action_steps = {snapshot.values.get("current_step") for snapshot in action_snapshots}
     assert "action:q1" in action_steps
     assert "action:q2" in action_steps
+
+
+@dataclass
+class TwoReportRetriever(Retriever):
+    def community_reports(self, query: str, *, top_k: int = 5) -> list[CommunityReport]:
+        reports = [
+            CommunityReport("c1", "community one", 0.9),
+            CommunityReport("c2", "community two", 0.8),
+        ]
+        return reports[:top_k]
+
+
+class FlakySecondPrimerFoldReasoner(ScriptedReasoner):
+    def __init__(self) -> None:
+        self.attempts: Counter[str] = Counter()
+        self.c2_failures_remaining = 1
+
+    def prime_drift(
+        self,
+        query: str,
+        reports: list[CommunityReport],
+    ) -> DriftPrimerResult:
+        key = ",".join(report.id for report in reports)
+        self.attempts[key] += 1
+        if key == "c2" and self.c2_failures_remaining:
+            self.c2_failures_remaining -= 1
+            raise TimeoutError("temporary primer timeout")
+        return DriftPrimerResult(
+            f"primer:{key}",
+            80 if key == "c1" else 60,
+            [f"followup:{key}"],
+        )
+
+
+def test_failed_primer_fold_retries_only_that_fold() -> None:
+    reasoner = FlakySecondPrimerFoldReasoner()
+    engine = GraphRAGEngine(TwoReportRetriever(), reasoner)
+
+    result = run_drift_workflow(
+        engine,
+        "root",
+        top_k=2,
+        max_depth=1,
+        max_actions_per_depth=1,
+        community_top_k=0,
+        action_concurrency=1,
+        primer_folds=2,
+        primer_concurrency=2,
+        max_step_retries=1,
+    )
+
+    assert result["status"] == "completed"
+    assert result["retry_counts"]["primer_fold:1"] == 1
+    assert reasoner.attempts["c1"] == 1
+    assert reasoner.attempts["c2"] == 2
+    assert result["primer_fold_count"] == 2
+    assert result["primer_score"] == 70
+    assert "primer:c1" in result["primer_answer"]
+    assert "primer:c2" in result["primer_answer"]
+
+
+def test_checkpointer_records_each_primer_fold_checkpoint() -> None:
+    engine = GraphRAGEngine(
+        TwoReportRetriever(),
+        FlakySecondPrimerFoldReasoner(),
+    )
+    checkpointer = InMemorySaver()
+    workflow = build_drift_workflow(engine, checkpointer=checkpointer)
+    config = {"configurable": {"thread_id": "primer-fold-run"}}
+
+    result = workflow.invoke(
+        {
+            "query": "root",
+            "top_k": 2,
+            "max_depth": 1,
+            "max_actions_per_depth": 1,
+            "community_top_k": 0,
+            "action_concurrency": 1,
+            "primer_folds": 2,
+            "primer_concurrency": 2,
+            "max_step_retries": 1,
+            "retry_counts": {},
+            "primer_report_folds": [],
+            "primer_fold_results": {},
+            "primer_fold_queue": [],
+            "current_primer_fold": -1,
+            "epoch_queue": [],
+            "current_action_query": "",
+            "status": "running",
+            "current_step": "start",
+            "last_error": "",
+            "failed_step": "",
+        },
+        config=config,
+    )
+
+    history = list(workflow.get_state_history(config))
+    primer_steps = [
+        snapshot.values.get("current_step")
+        for snapshot in history
+        if str(snapshot.values.get("current_step", "")).startswith("primer_fold:")
+    ]
+
+    assert result["status"] == "completed"
+    assert "primer_fold:0" in primer_steps
+    assert "primer_fold:1" in primer_steps
