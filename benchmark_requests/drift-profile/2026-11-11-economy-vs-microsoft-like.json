@@ -1,0 +1,10 @@
+{
+  "cases": "benchmarks/legal_smoke.jsonl",
+  "as_of_date": "2026-10-05",
+  "drift_top_k": 2,
+  "profiles": [
+    "economy",
+    "microsoft-like"
+  ],
+  "requested_by": "chatgpt-development-run"
+}
