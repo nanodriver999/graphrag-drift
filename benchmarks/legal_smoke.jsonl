@@ -1,4 +1,4 @@
-{"id":"law-safety-manager-duties","query":"방사선안전관리자의 주요 의무는 무엇인가?","tags":["law","role","local-global-drift"],"expected_topics":["안전관리규정","기술기준","조치","권고"]}
+{"id":"law-safety-manager-duties","query":"방사선안전관리자의 주요 의무는 무엇인가?","tags":["law","role","local-global-drift"],"expected_topics":["안전관리규정","기술기준","조치","권고"],"expected_articles":["011435:53-3"]}
 {"id":"law-delegation-relationship","query":"업무대행자와 방사선안전관리자의 관계와 주요 의무를 설명해줘.","tags":["law","relationship","drift"],"expected_topics":["업무대행","방사선안전관리"]}
 {"id":"law-safety-manager-substitute","query":"방사선안전관리자의 대리자는 언제 지정해야 하고 어떤 자격이 필요한가?","tags":["law","role","local"],"expected_topics":["대리자","자격요건"]}
 {"id":"law-reporting-user-appointment","query":"신고사용자가 방사선안전관리자를 선임할 때 필요한 신고와 서류는 무엇인가?","tags":["law","procedure","local"],"expected_topics":["선임신고","첨부서류"]}
