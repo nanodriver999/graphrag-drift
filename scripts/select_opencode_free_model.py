@@ -23,6 +23,11 @@ def main() -> None:
     )
     parser.add_argument("--timeout", type=float, default=60)
     parser.add_argument("--max-models", type=int, default=3)
+    parser.add_argument(
+        "--required-model",
+        default=None,
+        help="Exactly one provider/model identifier. Fail instead of picking another model.",
+    )
     parser.add_argument("--skip-workload-probe", action="store_true")
     parser.add_argument("--output", default=None)
     parser.add_argument("--github-env", default=None)
@@ -39,6 +44,7 @@ def main() -> None:
         preferred_model_ids=args.preferred_models,
         max_models=args.max_models,
         workload_probe=not args.skip_workload_probe,
+        required_model=args.required_model,
     )
     selected = selected_models[0]
     result = {

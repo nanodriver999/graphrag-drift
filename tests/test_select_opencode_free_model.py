@@ -173,3 +173,40 @@ def test_selector_skips_model_that_times_out_on_workload_probe() -> None:
     assert selected[0].model_id == "broken-free"
     assert attempts[0]["model_id"] == "working-free"
     assert "TimeoutError" in attempts[0]["error"]
+
+
+
+def test_required_zero_cost_model_is_selected_without_alternatives() -> None:
+    selected, attempts = select_working_models(
+        WorkloadProbeClient(broken_models=set()),
+        provider_payload(),
+        required_model="opencode/working-free",
+        max_models=3,
+        workload_probe=True,
+    )
+    assert [item.qualified_id for item in selected] == ["opencode/working-free"]
+    assert len(attempts) == 1
+
+
+def test_required_model_rejects_disconnected_paid_and_unknown_models() -> None:
+    for required in [
+        "opencode/paid",
+        "disconnected/free",
+        "opencode/missing",
+    ]:
+        with pytest.raises(RuntimeError, match="Required zero-cost"):
+            select_working_models(
+                WorkloadProbeClient(broken_models=set()),
+                provider_payload(),
+                required_model=required,
+            )
+
+
+def test_required_model_does_not_fallback_when_probe_fails() -> None:
+    with pytest.raises(RuntimeError, match="opencode/working-free"):
+        select_working_models(
+            WorkloadProbeClient(broken_models={"working-free"}),
+            provider_payload(),
+            required_model="opencode/working-free",
+            preferred_model_ids=["broken-free"],
+        )

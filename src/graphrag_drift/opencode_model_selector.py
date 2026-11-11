@@ -187,15 +187,28 @@ def select_working_models(
     preferred_model_ids: list[str] | None = None,
     max_models: int = 3,
     workload_probe: bool = True,
+    required_model: str | None = None,
 ) -> tuple[list[ModelCandidate], list[dict[str, str]]]:
     candidates = zero_cost_candidates(
         payload,
         preferred_model_ids=preferred_model_ids,
     )
+    if required_model:
+        candidates = [
+            item for item in candidates
+            if item.qualified_id == required_model
+        ]
+        if not candidates:
+            raise RuntimeError(
+                "Required zero-cost OpenCode model is not connected or "
+                f"not listed as zero-cost: {required_model}"
+            )
     if not candidates:
         raise RuntimeError("No connected zero-cost OpenCode models were found")
     if max_models < 1:
         raise ValueError("max_models must be >= 1")
+    if required_model:
+        max_models = 1
 
     selected: list[ModelCandidate] = []
     attempts: list[dict[str, str]] = []
@@ -257,6 +270,7 @@ def select_working_model(
     *,
     preferred_model_ids: list[str] | None = None,
     workload_probe: bool = False,
+    required_model: str | None = None,
 ) -> tuple[ModelCandidate, list[dict[str, str]]]:
     selected, attempts = select_working_models(
         client,
@@ -264,5 +278,6 @@ def select_working_model(
         preferred_model_ids=preferred_model_ids,
         max_models=1,
         workload_probe=workload_probe,
+        required_model=required_model,
     )
     return selected[0], attempts
