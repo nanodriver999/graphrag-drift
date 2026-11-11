@@ -1,10 +1,33 @@
 from __future__ import annotations
 
 import json
+import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from opencode_muse_gateway.gateway import OpenCodeClient
+
+class OpenCodeClient:
+    def __init__(self, base_url: str, timeout_seconds: float) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+
+    def request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        body: dict[str, Any] | None = None,
+    ) -> Any:
+        payload = None if body is None else json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            self.base_url + path,
+            data=payload,
+            method=method,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
+            raw = response.read()
+            return json.loads(raw) if raw else None
 
 
 @dataclass(frozen=True)
