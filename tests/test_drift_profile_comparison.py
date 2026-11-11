@@ -136,3 +136,42 @@ def test_compare_reports_actual_fallback_usage() -> None:
     markdown = render_drift_profile_comparison_markdown(result)
     assert "Actual model usage" in markdown
     assert "fallback: 3 successful replies" in markdown
+
+
+
+def test_markdown_distinguishes_direct_article_retrieval_from_keyword_coverage() -> None:
+    baseline = suite(
+        wall_ms=100,
+        llm_calls=4,
+        coverage=1.0,
+        insufficient=0,
+        evidence=4,
+        actions=2,
+        epochs=1,
+    )
+    alternate = suite(
+        wall_ms=200,
+        llm_calls=8,
+        coverage=0.8,
+        insufficient=0,
+        evidence=8,
+        actions=4,
+        epochs=2,
+    )
+    baseline["summary"]["modes"]["drift"]["direct_article_source_coverage"] = {
+        "mean": 0.0,
+    }
+    alternate["summary"]["modes"]["drift"]["direct_article_source_coverage"] = {
+        "mean": 1.0,
+    }
+    result = compare_drift_profiles({
+        "economy": baseline,
+        "microsoft-like": alternate,
+    })
+    rows = {row["profile"]: row for row in result["profiles"]}
+    assert rows["economy"]["metrics"]["topic_coverage"]["mean"] == 1.0
+    assert rows["economy"]["metrics"]["direct_article_source_coverage"]["mean"] == 0.0
+    markdown = render_drift_profile_comparison_markdown(result)
+    assert "Direct article source coverage" in markdown
+    assert "not a legal correctness score" in markdown
+    assert "direct_article_source_coverage: delta=1.0" in markdown
