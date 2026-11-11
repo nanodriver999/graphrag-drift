@@ -176,3 +176,19 @@ def run_benchmark_suite(
         "cases": case_rows,
         "summary": summarize_benchmark_runs(mode_runs),
     }
+
+
+def select_benchmark_cases(
+    cases: list[BenchmarkCase],
+    case_ids: list[str],
+) -> list[BenchmarkCase]:
+    """Filter to requested cases in dataset order for resumable case runs."""
+    if not case_ids:
+        return cases
+    requested = set(case_ids)
+    unknown = sorted(requested - {case.id for case in cases})
+    if unknown:
+        raise ValueError(f"Unknown benchmark case ID(s): {', '.join(unknown)}")
+    return [case for case in cases if case.id in requested]
+
+
