@@ -92,3 +92,14 @@ def test_partial_report_preserves_strict_identity(tmp_path: Path) -> None:
     reloaded = ProfileBenchmarkProgress.load(progress.path, identity=identity)
     report = build_partial_profile_report(CASES, reloaded)
     assert report["benchmark_identity"] == identity
+
+
+
+def test_partial_markdown_shows_unavailable_provenance_without_false_zero(tmp_path: Path) -> None:
+    progress = ProfileBenchmarkProgress.load(tmp_path / "progress.json")
+    progress.put("e1", _measurement("question one", "economy", "alpha", 10))
+    progress.put("m1", _measurement("question one", "microsoft-like", "alpha", 30))
+    report = build_partial_profile_report(CASES, progress)
+    markdown = render_partial_profile_report_markdown(report)
+    assert "- direct_article_source_coverage: not available" in markdown
+    assert "not the factual or legal correctness" in markdown

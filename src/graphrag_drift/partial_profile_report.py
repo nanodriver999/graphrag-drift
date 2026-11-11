@@ -140,10 +140,24 @@ def render_partial_profile_report_markdown(report: dict[str, Any]) -> str:
         paired = report["paired_comparison"]
         for profile in paired["profiles"]:
             lines.extend(["", f"### {profile['profile']} (paired cases only)", ""])
-            for name in ("wall_ms", "llm_calls", "topic_coverage"):
+            for name in (
+                "wall_ms",
+                "llm_calls",
+                "topic_coverage",
+                "direct_article_source_coverage",
+                "unique_direct_article_source_count",
+            ):
                 value = profile["metrics"].get(name, {}).get("mean")
                 lines.append(f"- {name}: {value if value is not None else 'not available'}")
     else:
         lines.append("No question has been completed by every profile.")
-    lines.extend(["", report["caveat"], ""])
+    lines.extend([
+        "",
+        "Direct article source coverage measures retrieval of effective original "
+        "law article IDs, not the factual or legal correctness of an answer. "
+        "Only gold-annotated cases with source provenance have a score.",
+        "",
+        report["caveat"],
+        "",
+    ])
     return "\n".join(lines)

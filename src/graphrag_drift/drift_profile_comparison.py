@@ -116,8 +116,8 @@ def render_drift_profile_comparison_markdown(result: dict[str, Any]) -> str:
         "",
         f"Baseline: **{baseline}**",
         "",
-        "| Profile | Wall ms | LLM calls | Topic coverage | Insufficient rate | Evidence | Actions | Epochs |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Profile | Wall ms | LLM calls | Topic coverage | Direct article source coverage* | Insufficient rate | Evidence | Actions | Epochs |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
     for row in rows:
@@ -142,6 +142,7 @@ def render_drift_profile_comparison_markdown(result: dict[str, Any]) -> str:
                     mean("wall_ms"),
                     mean("llm_calls"),
                     mean("topic_coverage"),
+                    mean("direct_article_source_coverage"),
                     str(row.get("insufficient_answer_rate", "-")),
                     mean("evidence_count"),
                     mean("action_count"),
@@ -151,7 +152,15 @@ def render_drift_profile_comparison_markdown(result: dict[str, Any]) -> str:
             + " |"
         )
 
-    lines.extend(["", "## Delta from baseline", ""])
+    lines.extend([
+        "",
+        "*Direct article source coverage is calculated only for benchmark cases "
+        "with verified gold article IDs and recorded retrieved-source provenance. "
+        "It is not a legal correctness score. '-' means unavailable.",
+        "",
+        "## Delta from baseline",
+        "",
+    ])
 
     for row in rows:
         if not isinstance(row, dict) or row.get("is_baseline"):
@@ -167,6 +176,8 @@ def render_drift_profile_comparison_markdown(result: dict[str, Any]) -> str:
             "wall_ms",
             "llm_calls",
             "topic_coverage",
+            "direct_article_source_coverage",
+            "unique_direct_article_source_count",
             "evidence_count",
             "action_count",
             "epochs",
