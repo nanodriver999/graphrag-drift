@@ -6,7 +6,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .core import GraphRAGEngine
 from .drift_state import DriftAction, DriftQueryState
-from .models import SearchHit
+from .models import CommunityReport, DriftPrimerResult, SearchHit
 
 
 DriftRunStatus = Literal["running", "completed", "failed"]
@@ -28,6 +28,10 @@ class DriftWorkflowState(TypedDict, total=False):
     primer_report_ids: list[str]
     primer_fold_count: int
     primer_source: str
+    primer_report_folds: list[list[dict[str, Any]]]
+    primer_fold_results: dict[str, dict[str, Any]]
+    primer_fold_queue: list[int]
+    current_primer_fold: int
 
     evidence: list[dict[str, Any]]
     action_graph: dict[str, Any]
@@ -60,6 +64,38 @@ def _hit_from_dict(payload: dict[str, Any]) -> SearchHit:
         id=str(payload["id"]),
         text=str(payload["text"]),
         score=float(payload.get("score", 1.0)),
+    )
+
+
+def _report_to_dict(report: CommunityReport) -> dict[str, Any]:
+    return {"id": report.id, "summary": report.summary, "score": report.score}
+
+
+def _report_from_dict(payload: dict[str, Any]) -> CommunityReport:
+    return CommunityReport(
+        id=str(payload["id"]),
+        summary=str(payload["summary"]),
+        score=float(payload.get("score", 1.0)),
+    )
+
+
+def _primer_result_to_dict(result: DriftPrimerResult) -> dict[str, Any]:
+    return {
+        "intermediate_answer": result.intermediate_answer,
+        "score": result.score,
+        "follow_up_queries": list(result.follow_up_queries),
+    }
+
+
+def _primer_result_from_dict(payload: dict[str, Any]) -> DriftPrimerResult:
+    return DriftPrimerResult(
+        intermediate_answer=str(payload.get("intermediate_answer") or ""),
+        score=int(payload.get("score", 0)),
+        follow_up_queries=[
+            str(item)
+            for item in payload.get("follow_up_queries", [])
+            if str(item).strip()
+        ],
     )
 
 
@@ -152,35 +188,133 @@ def build_drift_workflow(
 ):
     """Build a resumable LangGraph DRIFT workflow.
 
-    Checkpoints are created between primer, frontier initialization, every ranked
-    action, epoch finalization, and final reduce. A failed action retries only that
-    action; already completed actions remain checkpointed.
+    Checkpoints are created for each primer fold, frontier initialization, every
+    ranked action, epoch finalization, and final reduce. Failed folds/actions retry
+    independently; already completed work remains checkpointed.
     """
 
-    def primer(state: DriftWorkflowState) -> DriftWorkflowState:
+    def prepare_primer(state: DriftWorkflowState) -> DriftWorkflowState:
         try:
-            result = engine.drift_primer(
+            reports = engine.retriever.community_reports(
                 state["query"],
                 top_k=state.get("top_k", 5),
+            )
+            if not reports:
+                assert engine.reasoner is not None
+                hits = engine.retriever.local_search(
+                    state["query"],
+                    top_k=state.get("top_k", 5),
+                )
+                followups = engine.reasoner.generate_followups(
+                    state["query"],
+                    hits,
+                    depth=0,
+                )
+                return {
+                    **_clear_failure("prepare_primer"),
+                    "primer_answer": "",
+                    "primer_score": 0,
+                    "primer_report_ids": [],
+                    "primer_fold_count": 0,
+                    "primer_source": "local-fallback",
+                    "primer_report_folds": [],
+                    "primer_fold_results": {},
+                    "primer_fold_queue": [],
+                    "current_primer_fold": -1,
+                    "evidence": [_hit_to_dict(hit) for hit in hits],
+                    "followups": followups,
+                    "epochs": 0,
+                }
+
+            folds = engine._split_primer_reports(
+                reports,
                 primer_folds=state.get("primer_folds", 5),
-                primer_concurrency=state.get("primer_concurrency", 5),
             )
         except Exception as exc:
-            return _record_failure(state, step="primer", exc=exc)
+            return _record_failure(state, step="prepare_primer", exc=exc)
 
         return {
-            **_clear_failure("primer"),
-            "primer_answer": str(result.get("primer_answer") or ""),
-            "primer_score": int(result.get("primer_score", 0)),
-            "primer_report_ids": list(result.get("primer_report_ids", [])),
-            "primer_fold_count": int(result.get("primer_fold_count", 0)),
-            "primer_source": str(result.get("primer_source") or ""),
-            "evidence": [
-                _hit_to_dict(hit)
-                for hit in result.get("evidence", [])
+            **_clear_failure("prepare_primer"),
+            "primer_report_ids": [report.id for report in reports],
+            "primer_fold_count": len(folds),
+            "primer_source": "community",
+            "primer_report_folds": [
+                [_report_to_dict(report) for report in fold]
+                for fold in folds
             ],
-            "followups": list(result.get("followups", [])),
+            "primer_fold_results": {},
+            "primer_fold_queue": list(range(len(folds))),
+            "current_primer_fold": -1,
+            "evidence": [],
+            "followups": [],
             "epochs": 0,
+        }
+
+    def execute_primer_fold(state: DriftWorkflowState) -> DriftWorkflowState:
+        queue = list(state.get("primer_fold_queue", []))
+        if not queue:
+            return {
+                **_clear_failure("execute_primer_fold"),
+                "current_primer_fold": -1,
+            }
+
+        fold_index = int(queue[0])
+        step = f"primer_fold:{fold_index}"
+        try:
+            assert engine.reasoner is not None
+            folds = state.get("primer_report_folds", [])
+            fold = [
+                _report_from_dict(item)
+                for item in folds[fold_index]
+            ]
+            result = engine.reasoner.prime_drift(
+                state["query"],
+                fold,
+            )
+        except Exception as exc:
+            failed = _record_failure(state, step=step, exc=exc)
+            failed["current_primer_fold"] = fold_index
+            return failed
+
+        results = dict(state.get("primer_fold_results", {}))
+        results[str(fold_index)] = _primer_result_to_dict(result)
+        return {
+            **_clear_failure(step),
+            "primer_fold_results": results,
+            "primer_fold_queue": queue[1:],
+            "current_primer_fold": fold_index,
+        }
+
+    def aggregate_primer(state: DriftWorkflowState) -> DriftWorkflowState:
+        try:
+            count = int(state.get("primer_fold_count", 0))
+            fold_results = [
+                _primer_result_from_dict(
+                    state.get("primer_fold_results", {})[str(index)]
+                )
+                for index in range(count)
+            ]
+            primer = engine._aggregate_primer_results(fold_results)
+        except Exception as exc:
+            return _record_failure(state, step="aggregate_primer", exc=exc)
+
+        evidence: list[SearchHit] = []
+        if primer.intermediate_answer.strip():
+            evidence.append(
+                SearchHit(
+                    id="drift-primer",
+                    text=primer.intermediate_answer.strip(),
+                    score=primer.score / 100.0,
+                )
+            )
+
+        return {
+            **_clear_failure("aggregate_primer"),
+            "primer_answer": primer.intermediate_answer,
+            "primer_score": primer.score,
+            "followups": list(primer.follow_up_queries),
+            "evidence": [_hit_to_dict(hit) for hit in evidence],
+            "current_primer_fold": -1,
         }
 
     def initialize_frontier(state: DriftWorkflowState) -> DriftWorkflowState:
@@ -364,11 +498,37 @@ def build_drift_workflow(
             return retry_target
         return "fail"
 
-    def after_primer(state: DriftWorkflowState) -> str:
+    def after_prepare_primer(state: DriftWorkflowState) -> str:
+        failed_step = state.get("failed_step")
+        if failed_step:
+            return route_after_retryable_step(
+                state,
+                success_target="initialize_frontier",
+                retry_target="prepare_primer",
+            )
+        if state.get("primer_source") == "local-fallback":
+            return "initialize_frontier"
+        if state.get("primer_fold_queue"):
+            return "execute_primer_fold"
+        return "aggregate_primer"
+
+    def after_primer_fold(state: DriftWorkflowState) -> str:
+        failed_step = state.get("failed_step")
+        if failed_step:
+            attempts = _retry_count(state, failed_step)
+            if attempts <= state.get("max_step_retries", 2):
+                return "execute_primer_fold"
+            return "fail"
+
+        if state.get("primer_fold_queue"):
+            return "execute_primer_fold"
+        return "aggregate_primer"
+
+    def after_aggregate_primer(state: DriftWorkflowState) -> str:
         return route_after_retryable_step(
             state,
             success_target="initialize_frontier",
-            retry_target="primer",
+            retry_target="aggregate_primer",
         )
 
     def after_plan_epoch(state: DriftWorkflowState) -> str:
@@ -407,7 +567,9 @@ def build_drift_workflow(
         )
 
     graph = StateGraph(DriftWorkflowState)
-    graph.add_node("primer", primer)
+    graph.add_node("prepare_primer", prepare_primer)
+    graph.add_node("execute_primer_fold", execute_primer_fold)
+    graph.add_node("aggregate_primer", aggregate_primer)
     graph.add_node("initialize_frontier", initialize_frontier)
     graph.add_node("plan_epoch", plan_epoch)
     graph.add_node("execute_action", execute_action)
@@ -415,12 +577,32 @@ def build_drift_workflow(
     graph.add_node("reduce", reduce_answer)
     graph.add_node("fail", fail_run)
 
-    graph.add_edge(START, "primer")
+    graph.add_edge(START, "prepare_primer")
     graph.add_conditional_edges(
-        "primer",
-        after_primer,
+        "prepare_primer",
+        after_prepare_primer,
         {
-            "primer": "primer",
+            "prepare_primer": "prepare_primer",
+            "execute_primer_fold": "execute_primer_fold",
+            "aggregate_primer": "aggregate_primer",
+            "initialize_frontier": "initialize_frontier",
+            "fail": "fail",
+        },
+    )
+    graph.add_conditional_edges(
+        "execute_primer_fold",
+        after_primer_fold,
+        {
+            "execute_primer_fold": "execute_primer_fold",
+            "aggregate_primer": "aggregate_primer",
+            "fail": "fail",
+        },
+    )
+    graph.add_conditional_edges(
+        "aggregate_primer",
+        after_aggregate_primer,
+        {
+            "aggregate_primer": "aggregate_primer",
             "initialize_frontier": "initialize_frontier",
             "fail": "fail",
         },
@@ -507,6 +689,10 @@ def run_drift_workflow(
         "primer_concurrency": primer_concurrency,
         "max_step_retries": max_step_retries,
         "retry_counts": {},
+        "primer_report_folds": [],
+        "primer_fold_results": {},
+        "primer_fold_queue": [],
+        "current_primer_fold": -1,
         "epoch_queue": [],
         "current_action_query": "",
         "status": "running",
