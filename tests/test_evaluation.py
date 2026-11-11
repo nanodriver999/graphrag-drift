@@ -7,6 +7,7 @@ from time import sleep
 
 from graphrag_drift.core import GraphRAGEngine
 from graphrag_drift.evaluation import GraphRAGModeBenchmark, InstrumentedTextGenerator
+from graphrag_drift.llm import DeterministicReasoner
 from graphrag_drift.models import CommunityReport, SearchHit
 import pytest
 
