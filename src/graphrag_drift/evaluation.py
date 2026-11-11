@@ -99,6 +99,50 @@ class GraphRAGModeBenchmark:
         elapsed = perf_counter() - start
         return self._metrics(mode, result, elapsed)
 
+    def run_drift_only(
+        self,
+        query: str,
+        *,
+        drift_top_k: int = 5,
+        drift_profile: str = "economy",
+        drift_max_followups: int = 2,
+        drift_max_depth: int = 2,
+        drift_max_actions_per_depth: int = 2,
+        drift_community_top_k: int = 1,
+        drift_action_concurrency: int = 4,
+        drift_primer_folds: int = 5,
+        drift_primer_concurrency: int = 5,
+    ) -> dict[str, Any]:
+        row = self._run(
+            "drift",
+            lambda: self.drift_engine.drift(
+                query,
+                top_k=drift_top_k,
+                max_depth=drift_max_depth,
+                max_actions_per_depth=drift_max_actions_per_depth,
+                community_top_k=drift_community_top_k,
+                action_concurrency=drift_action_concurrency,
+                primer_folds=drift_primer_folds,
+                primer_concurrency=drift_primer_concurrency,
+            ),
+        )
+        return {
+            "format": "graphrag-drift-mode-benchmark-v1",
+            "query": query,
+            "settings": {
+                "drift_top_k": drift_top_k,
+                "drift_profile": drift_profile,
+                "drift_max_followups": drift_max_followups,
+                "drift_max_depth": drift_max_depth,
+                "drift_max_actions_per_depth": drift_max_actions_per_depth,
+                "drift_community_top_k": drift_community_top_k,
+                "drift_action_concurrency": drift_action_concurrency,
+                "drift_primer_folds": drift_primer_folds,
+                "drift_primer_concurrency": drift_primer_concurrency,
+            },
+            "results": [row],
+        }
+
     def run(
         self,
         query: str,
