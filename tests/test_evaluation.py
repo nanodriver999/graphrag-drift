@@ -83,6 +83,9 @@ def test_mode_benchmark_records_llm_calls_and_evidence() -> None:
     assert rows["drift"]["depth"] == 1
     assert rows["drift"]["evidence_count"] == 4
     assert rows["drift"]["unique_evidence_count"] == 4
+    assert rows["drift"]["retrieved_evidence_count"] == 2
+    assert rows["drift"]["unique_retrieved_evidence_count"] == 2
+    assert rows["drift"]["synthesized_context_count"] == 2
     assert rows["drift"]["primer_source"] == "community"
     assert rows["drift"]["primer_score"] == 90
     assert rows["drift"]["primer_report_count"] == 1
@@ -222,3 +225,37 @@ def test_drift_only_benchmark_accepts_custom_resumable_executor() -> None:
     assert row["checkpoint_reused"] is True
     assert row["run_status"] == "completed"
     assert row["llm_calls"] == 0
+    assert row["retrieved_evidence_count"] == 1
+    assert row["unique_retrieved_evidence_count"] == 1
+    assert row["synthesized_context_count"] == 0
+
+
+def test_drift_evidence_metrics_exclude_generated_primer_and_actions() -> None:
+    generator = InstrumentedTextGenerator(FakeGenerator(responses=[]))
+    engine = GraphRAGEngine(retriever=FakeRetriever(), reasoner=DeterministicReasoner())
+    benchmark = GraphRAGModeBenchmark(
+        local_engine=engine,
+        global_engine=engine,
+        drift_engine=engine,
+        generator_probe=generator,
+    )
+
+    result = benchmark.run_drift_only(
+        "test query",
+        drift_executor=lambda: {
+            "evidence": [
+                SearchHit("drift-primer", "synthesized primer", 0.9),
+                SearchHit("chunk:law", "primary source law", 0.8),
+                SearchHit("chunk:law", "primary source law repeated", 0.8),
+                SearchHit("community:report", "retrieved report", 0.7),
+                SearchHit("drift-action:q1", "generated answer", 0.6),
+            ],
+            "answer": "answer",
+        },
+    )
+
+    row = result["results"][0]
+    assert row["evidence_count"] == 5
+    assert row["retrieved_evidence_count"] == 3
+    assert row["unique_retrieved_evidence_count"] == 2
+    assert row["synthesized_context_count"] == 2
