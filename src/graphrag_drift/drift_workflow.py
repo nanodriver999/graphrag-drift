@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -33,6 +32,8 @@ class DriftWorkflowState(TypedDict, total=False):
     evidence: list[dict[str, Any]]
     action_graph: dict[str, Any]
     epochs: int
+    epoch_queue: list[str]
+    current_action_query: str
 
     current_step: str
     status: DriftRunStatus
@@ -151,9 +152,9 @@ def build_drift_workflow(
 ):
     """Build a resumable LangGraph DRIFT workflow.
 
-    Checkpoints are created between primer, frontier initialization, each ranked
-    action epoch, and final reduce. Failed nodes return structured state and retry
-    from their own checkpoint up to max_step_retries.
+    Checkpoints are created between primer, frontier initialization, every ranked
+    action, epoch finalization, and final reduce. A failed action retries only that
+    action; already completed actions remain checkpointed.
     """
 
     def primer(state: DriftWorkflowState) -> DriftWorkflowState:
@@ -226,81 +227,92 @@ def build_drift_workflow(
             "action_graph": query_state.serialize(),
         }
 
-    def execute_epoch(state: DriftWorkflowState) -> DriftWorkflowState:
+    def plan_epoch(state: DriftWorkflowState) -> DriftWorkflowState:
+        query_state = _query_state_from_dict(
+            state.get("action_graph", {"nodes": [], "edges": []})
+        )
+        frontier = query_state.rank_incomplete_actions()
+        queue = [
+            action.query
+            for action in frontier[: max(1, state.get("max_actions_per_depth", 2))]
+        ]
+        return {
+            **_clear_failure("plan_epoch"),
+            "epoch_queue": queue,
+            "current_action_query": "",
+        }
+
+    def execute_action(state: DriftWorkflowState) -> DriftWorkflowState:
+        queue = list(state.get("epoch_queue", []))
+        if not queue:
+            return {
+                **_clear_failure("execute_action"),
+                "current_action_query": "",
+            }
+
+        action_query = queue[0]
+        step = f"action:{action_query}"
         try:
             query_state = _query_state_from_dict(
                 state.get("action_graph", {"nodes": [], "edges": []})
             )
+            action = query_state.actions[action_query]
             evidence = [
                 _hit_from_dict(item)
                 for item in state.get("evidence", [])
             ]
-            frontier = query_state.rank_incomplete_actions()
-            if not frontier:
-                return {
-                    **_clear_failure("execute_epoch"),
-                    "action_graph": query_state.serialize(),
-                }
 
-            actions = frontier[: max(1, state.get("max_actions_per_depth", 2))]
-            worker_count = min(
-                max(1, state.get("action_concurrency", 4)),
-                len(actions),
+            _, action_result, hits = engine._execute_drift_action(
+                state["query"],
+                action,
+                top_k=state.get("top_k", 5),
+                community_top_k=state.get("community_top_k", 1),
             )
 
-            def execute(action: DriftAction):
-                return engine._execute_drift_action(
-                    state["query"],
-                    action,
-                    top_k=state.get("top_k", 5),
-                    community_top_k=state.get("community_top_k", 1),
+            completed = query_state.complete_action(
+                action.query,
+                action_result,
+                hits,
+            )
+            evidence.extend(hits)
+            if completed.answer:
+                evidence.append(
+                    SearchHit(
+                        id=f"drift-action:{completed.query}",
+                        text=completed.answer,
+                        score=(completed.score or 0.0) / 100.0,
+                    )
                 )
 
-            if worker_count == 1:
-                action_results = [execute(action) for action in actions]
-            else:
-                with ThreadPoolExecutor(max_workers=worker_count) as executor:
-                    futures = [
-                        executor.submit(execute, action)
-                        for action in actions
-                    ]
-                    action_results = [future.result() for future in futures]
-
-            for action, action_result, hits in action_results:
-                completed = query_state.complete_action(
+            if (
+                action.depth < state.get("max_depth", 2)
+                and action_result.follow_up_queries
+            ):
+                query_state.add_followups(
                     action.query,
-                    action_result,
-                    hits,
+                    action_result.follow_up_queries,
+                    depth=action.depth + 1,
+                    priority=float(action_result.score),
                 )
-                evidence.extend(hits)
-                if completed.answer:
-                    evidence.append(
-                        SearchHit(
-                            id=f"drift-action:{completed.query}",
-                            text=completed.answer,
-                            score=(completed.score or 0.0) / 100.0,
-                        )
-                    )
-
-                if (
-                    action.depth < state.get("max_depth", 2)
-                    and action_result.follow_up_queries
-                ):
-                    query_state.add_followups(
-                        action.query,
-                        action_result.follow_up_queries,
-                        depth=action.depth + 1,
-                        priority=float(action_result.score),
-                    )
 
         except Exception as exc:
-            return _record_failure(state, step="execute_epoch", exc=exc)
+            failed = _record_failure(state, step=step, exc=exc)
+            failed["current_action_query"] = action_query
+            return failed
 
         return {
-            **_clear_failure("execute_epoch"),
+            **_clear_failure(step),
             "action_graph": query_state.serialize(),
             "evidence": [_hit_to_dict(hit) for hit in evidence],
+            "epoch_queue": queue[1:],
+            "current_action_query": action_query,
+        }
+
+    def finalize_epoch(state: DriftWorkflowState) -> DriftWorkflowState:
+        return {
+            **_clear_failure("finalize_epoch"),
             "epochs": int(state.get("epochs", 0)) + 1,
+            "current_action_query": "",
         }
 
     def reduce_answer(state: DriftWorkflowState) -> DriftWorkflowState:
@@ -359,15 +371,24 @@ def build_drift_workflow(
             retry_target="primer",
         )
 
-    def after_epoch(state: DriftWorkflowState) -> str:
+    def after_plan_epoch(state: DriftWorkflowState) -> str:
+        if state.get("epoch_queue"):
+            return "execute_action"
+        return "reduce"
+
+    def after_action(state: DriftWorkflowState) -> str:
         failed_step = state.get("failed_step")
         if failed_step:
-            return route_after_retryable_step(
-                state,
-                success_target="reduce",
-                retry_target="execute_epoch",
-            )
+            attempts = _retry_count(state, failed_step)
+            if attempts <= state.get("max_step_retries", 2):
+                return "execute_action"
+            return "fail"
 
+        if state.get("epoch_queue"):
+            return "execute_action"
+        return "finalize_epoch"
+
+    def after_finalize_epoch(state: DriftWorkflowState) -> str:
         query_state = _query_state_from_dict(
             state.get("action_graph", {"nodes": [], "edges": []})
         )
@@ -376,7 +397,7 @@ def build_drift_workflow(
             or not query_state.rank_incomplete_actions()
         ):
             return "reduce"
-        return "execute_epoch"
+        return "plan_epoch"
 
     def after_reduce(state: DriftWorkflowState) -> str:
         return route_after_retryable_step(
@@ -388,7 +409,9 @@ def build_drift_workflow(
     graph = StateGraph(DriftWorkflowState)
     graph.add_node("primer", primer)
     graph.add_node("initialize_frontier", initialize_frontier)
-    graph.add_node("execute_epoch", execute_epoch)
+    graph.add_node("plan_epoch", plan_epoch)
+    graph.add_node("execute_action", execute_action)
+    graph.add_node("finalize_epoch", finalize_epoch)
     graph.add_node("reduce", reduce_answer)
     graph.add_node("fail", fail_run)
 
@@ -402,14 +425,30 @@ def build_drift_workflow(
             "fail": "fail",
         },
     )
-    graph.add_edge("initialize_frontier", "execute_epoch")
+    graph.add_edge("initialize_frontier", "plan_epoch")
     graph.add_conditional_edges(
-        "execute_epoch",
-        after_epoch,
+        "plan_epoch",
+        after_plan_epoch,
         {
-            "execute_epoch": "execute_epoch",
+            "execute_action": "execute_action",
             "reduce": "reduce",
+        },
+    )
+    graph.add_conditional_edges(
+        "execute_action",
+        after_action,
+        {
+            "execute_action": "execute_action",
+            "finalize_epoch": "finalize_epoch",
             "fail": "fail",
+        },
+    )
+    graph.add_conditional_edges(
+        "finalize_epoch",
+        after_finalize_epoch,
+        {
+            "plan_epoch": "plan_epoch",
+            "reduce": "reduce",
         },
     )
     graph.add_conditional_edges(
@@ -468,6 +507,8 @@ def run_drift_workflow(
         "primer_concurrency": primer_concurrency,
         "max_step_retries": max_step_retries,
         "retry_counts": {},
+        "epoch_queue": [],
+        "current_action_query": "",
         "status": "running",
         "current_step": "start",
         "last_error": "",
