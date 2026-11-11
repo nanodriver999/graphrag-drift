@@ -130,6 +130,23 @@ def summarize_benchmark_runs(runs: Iterable[dict[str, Any]]) -> dict[str, Any]:
             insufficient_answers / len(rows),
             3,
         )
+        tracked = [
+            row for row in rows
+            if isinstance(row.get("successful_model_calls"), dict)
+        ]
+        if tracked:
+            model_counts: dict[str, int] = {}
+            for row in tracked:
+                for model, count in row["successful_model_calls"].items():
+                    if isinstance(count, int) and not isinstance(count, bool):
+                        model_counts[str(model)] = model_counts.get(str(model), 0) + count
+            metric_summary["successful_model_calls"] = model_counts
+            metric_summary["model_usage_case_count"] = len(tracked)
+            metric_summary["fallback_case_rate"] = round(
+                sum(1 for row in tracked if row.get("used_fallback_model"))
+                / len(tracked),
+                3,
+            )
         aggregate[mode] = metric_summary
 
     return {
