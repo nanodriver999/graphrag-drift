@@ -79,7 +79,6 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${NEO4J_AURA_BLOB:-}" ]; then
-            echo "available=false" >> "$GITHUB_ENV"
             exit 0
           fi
 
@@ -125,16 +124,61 @@ jobs:
                   output.write("available=true\n")
           PY
 
-      - name: Explain skipped comparison
+      - name: Checkout snapshot data fallback
+        if: steps.aura.outputs.available != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: nanodriver999/graphrag-drift-data
+          ref: main
+          path: data-repo
+
+      - name: Restore community-ready snapshot fallback
         if: steps.aura.outputs.available != 'true'
         shell: bash
         run: |
-          echo "## DRIFT profile comparison skipped" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Neo4j Aura is unavailable from this runner." >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          snapshot_dir="$GITHUB_WORKSPACE/data-repo/snapshots/community-ready"
+          expected="$(python -c 'import json; print(json.load(open("data-repo/snapshots/community-ready/manifest.json"))["snapshot"]["sha256"])')"
+          actual="$(sha256sum "$snapshot_dir/neo4j.dump" | awk '{print $1}')"
+          test "$actual" = "$expected"
+
+          docker volume create graphrag-profile-data >/dev/null
+          docker run --rm \
+            -v graphrag-profile-data:/data \
+            -v "$snapshot_dir:/backups:ro" \
+            neo4j:5.26-community \
+            neo4j-admin database load neo4j \
+              --from-path=/backups \
+              --overwrite-destination=true
+
+          docker run -d --name graphrag-profile-neo4j \
+            -p 17474:7474 -p 17687:7687 \
+            -v graphrag-profile-data:/data \
+            -e NEO4J_AUTH=neo4j/local-test-password \
+            neo4j:5.26-community
+
+          for i in $(seq 1 90); do
+            if docker exec graphrag-profile-neo4j cypher-shell \
+              -u neo4j -p local-test-password "RETURN 1" >/dev/null 2>&1; then
+              echo "NEO4J_URI=bolt://localhost:17687" >> "$GITHUB_ENV"
+              echo "NEO4J_USERNAME=neo4j" >> "$GITHUB_ENV"
+              echo "NEO4J_PASSWORD=local-test-password" >> "$GITHUB_ENV"
+              echo "NEO4J_DATABASE=neo4j" >> "$GITHUB_ENV"
+              echo "GRAPH_SOURCE=community-ready-snapshot" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs graphrag-profile-neo4j
+          exit 1
+
+      - name: Record Aura source
+        if: steps.aura.outputs.available == 'true'
+        shell: bash
+        run: echo "GRAPH_SOURCE=aura" >> "$GITHUB_ENV"
 
       - name: Build retrieval indexes
-        if: steps.aura.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -147,7 +191,6 @@ jobs:
           exit 1
 
       - name: Download pinned OpenCode CLI
-        if: steps.aura.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -160,7 +203,6 @@ jobs:
           chmod +x opencode
 
       - name: Start OpenCode server
-        if: steps.aura.outputs.available == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -178,7 +220,6 @@ jobs:
           exit 1
 
       - name: Start OpenAI-compatible shim
-        if: steps.aura.outputs.available == 'true'
         env:
           OPENCODE_URL: http://127.0.0.1:4096
           OPENCODE_PROVIDER_ID: opencode
@@ -203,7 +244,6 @@ jobs:
           exit 1
 
       - name: Compare economy and microsoft-like DRIFT
-        if: steps.aura.outputs.available == 'true'
         env:
           OPENAI_COMPATIBLE_BASE_URL: http://127.0.0.1:8000
           OPENAI_COMPATIBLE_MODEL: muse-spark-1.3-contributor-free
@@ -220,10 +260,15 @@ jobs:
             --output-json "$RUNNER_TEMP/drift-profile-comparison.json" \
             --output-markdown "$RUNNER_TEMP/drift-profile-comparison.md"
 
+          {
+            echo "## Graph source"
+            echo ""
+            echo "`$GRAPH_SOURCE`"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
           cat "$RUNNER_TEMP/drift-profile-comparison.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload comparison artifacts
-        if: steps.aura.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: drift-profile-comparison
@@ -238,6 +283,7 @@ jobs:
         run: |
           cat "$RUNNER_TEMP/opencode.log" 2>/dev/null || true
           cat "$RUNNER_TEMP/opencode-shim.log" 2>/dev/null || true
+          docker logs graphrag-profile-neo4j 2>/dev/null || true
 
       - name: Cleanup
         if: always()
@@ -245,3 +291,5 @@ jobs:
         run: |
           test ! -f "$RUNNER_TEMP/opencode-shim.pid" || kill "$(cat "$RUNNER_TEMP/opencode-shim.pid")" >/dev/null 2>&1 || true
           test ! -f "$RUNNER_TEMP/opencode.pid" || kill "$(cat "$RUNNER_TEMP/opencode.pid")" >/dev/null 2>&1 || true
+          docker rm -f graphrag-profile-neo4j >/dev/null 2>&1 || true
+          docker volume rm graphrag-profile-data >/dev/null 2>&1 || true
