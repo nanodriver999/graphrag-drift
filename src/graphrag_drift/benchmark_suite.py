@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .quality_eval import evaluate_answer_quality
+from .source_grounding import evaluate_article_source_support
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,8 @@ _NUMERIC_METRICS = (
     "retrieved_evidence_count",
     "unique_retrieved_evidence_count",
     "synthesized_context_count",
+    "unique_direct_article_source_count",
+    "direct_article_source_coverage",
     "depth",
     "remaining_followups",
     "primer_score",
@@ -173,12 +177,34 @@ def run_benchmark_suite(
                 f"Benchmark case {case.id} expected_topics must be a string list"
             )
 
-        for row in result.get("results", []):
-            quality = evaluate_answer_quality(
-                str(row.get("answer") or ""),
-                expected_topics,
+        expected_articles = case.metadata.get("expected_articles", [])
+        if not isinstance(expected_articles, list) or any(
+            not isinstance(item, str) for item in expected_articles
+        ):
+            raise ValueError(
+                f"Benchmark case {case.id} expected_articles must be a string list"
             )
+        as_of = case.metadata.get("as_of_date") or os.getenv("GRAPHRAG_AS_OF_DATE")
+
+        for row in result.get("results", []):
+            answer = str(row.get("answer") or "")
+            quality = evaluate_answer_quality(answer, expected_topics)
             row.update(quality)
+            if expected_articles:
+                source_articles = row.get("direct_article_sources")
+                if not isinstance(source_articles, list):
+                    # Never call uninstrumented older runs zero-source matches.
+                    row["article_source_audit_status"] = "source_provenance_not_recorded"
+                elif not as_of:
+                    row["article_source_audit_status"] = "as_of_date_not_set"
+                else:
+                    row.update(evaluate_article_source_support(
+                        answer,
+                        source_articles,
+                        expected_articles,
+                        as_of_date=str(as_of),
+                    ))
+                    row["article_source_audit_status"] = "checked"
 
         mode_runs.append(result)
         case_rows.append(

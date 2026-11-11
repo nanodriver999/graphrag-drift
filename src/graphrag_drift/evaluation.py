@@ -7,6 +7,7 @@ from typing import Any
 
 from .core import GraphRAGEngine
 from .global_llm_reasoner import TextGenerator
+from .source_grounding import collect_article_sources
 
 
 @dataclass
@@ -120,6 +121,11 @@ class GraphRAGModeBenchmark:
                 {hit.id for hit in fetched}
             )
             metrics["synthesized_context_count"] = evidence_count - len(fetched)
+            # Preserve only explicit versioned law-article source IDs, never
+            # LLM-synthesized primers, action answers or anonymous entity hits.
+            sources = collect_article_sources(hit.id for hit in fetched)
+            metrics["direct_article_sources"] = sources
+            metrics["unique_direct_article_source_count"] = len(sources)
             metrics["depth"] = int(result.get("depth", 0))
             metrics["remaining_followups"] = len(result.get("followups", []))
             metrics["primer_source"] = str(result.get("primer_source") or "")

@@ -201,3 +201,57 @@ def test_summarize_benchmark_runs_attributes_actual_models() -> None:
     assert summary["successful_model_calls"] == {"primary": 8, "fallback": 1}
     assert summary["model_usage_case_count"] == 2
     assert summary["fallback_case_rate"] == 0.5
+
+
+
+def test_gold_article_is_scored_separately_from_answer_topics(monkeypatch) -> None:
+    monkeypatch.setenv("GRAPHRAG_AS_OF_DATE", "2026-10-05")
+    cases = [
+        BenchmarkCase(
+            "law-duties",
+            "What are duties?",
+            metadata={
+                "expected_topics": ["안전관리규정"],
+                "expected_articles": ["011435:53-3"],
+            },
+        )
+    ]
+    result = run_benchmark_suite(
+        cases,
+        lambda query: {
+            "query": query,
+            "results": [{
+                "mode": "drift",
+                "wall_ms": 5,
+                "answer": "원자력안전법 제53조의3에 따라 안전관리규정 준수",
+                "direct_article_sources": [{
+                    "law_id": "011435",
+                    "article": "53-3",
+                    "effective_date": "20270220",
+                    "source_id": "chunk-article:kr:law:011435:mst:1:effective:20270220:art:53-3",
+                }],
+            }],
+        },
+    )
+    row = result["cases"][0]["benchmark"]["results"][0]
+    assert row["topic_coverage"] == 1.0
+    assert row["direct_article_source_coverage"] == 0.0
+    assert row["future_only_expected_article_sources"] == ["011435:53-3"]
+    assert row["expected_article_mentions_without_direct_source"] == ["011435:53-3"]
+    assert result["summary"]["modes"]["drift"]["direct_article_source_coverage"]["mean"] == 0.0
+
+
+def test_uninstrumented_legacy_case_does_not_get_false_zero_source_score(monkeypatch) -> None:
+    monkeypatch.setenv("GRAPHRAG_AS_OF_DATE", "2026-10-05")
+    run = run_benchmark_suite(
+        [BenchmarkCase(
+            "q", "query", metadata={"expected_articles": ["011435:53-3"]}
+        )],
+        lambda query: {
+            "query": query,
+            "results": [{"mode": "drift", "answer": "제53조의3"}],
+        },
+    )
+    row = run["cases"][0]["benchmark"]["results"][0]
+    assert row["article_source_audit_status"] == "source_provenance_not_recorded"
+    assert "direct_article_source_coverage" not in row
