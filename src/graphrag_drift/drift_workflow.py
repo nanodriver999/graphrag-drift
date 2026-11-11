@@ -731,26 +731,19 @@ def resume_drift_workflow(
     return materialize_drift_result(resumed)
 
 
-def run_drift_workflow(
-    engine: GraphRAGEngine,
+def _initial_drift_state(
     query: str,
     *,
-    top_k: int = 5,
-    max_depth: int = 2,
-    max_actions_per_depth: int = 2,
-    community_top_k: int = 1,
-    action_concurrency: int = 4,
-    primer_folds: int = 5,
-    primer_concurrency: int = 5,
-    max_step_retries: int = 2,
-    checkpointer: Any | None = None,
-    config: dict[str, Any] | None = None,
+    top_k: int,
+    max_depth: int,
+    max_actions_per_depth: int,
+    community_top_k: int,
+    action_concurrency: int,
+    primer_folds: int,
+    primer_concurrency: int,
+    max_step_retries: int,
 ) -> DriftWorkflowState:
-    workflow = build_drift_workflow(
-        engine,
-        checkpointer=checkpointer,
-    )
-    initial: DriftWorkflowState = {
+    return {
         "query": query,
         "top_k": top_k,
         "max_depth": max_depth,
@@ -773,5 +766,98 @@ def run_drift_workflow(
         "last_error": "",
         "failed_step": "",
     }
+
+
+def run_or_resume_drift_workflow(
+    engine: GraphRAGEngine,
+    query: str,
+    *,
+    top_k: int = 5,
+    max_depth: int = 2,
+    max_actions_per_depth: int = 2,
+    community_top_k: int = 1,
+    action_concurrency: int = 4,
+    primer_folds: int = 5,
+    primer_concurrency: int = 5,
+    max_step_retries: int = 2,
+    checkpointer: Any,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Start or continue a persistent DRIFT thread."""
+
+    workflow = build_drift_workflow(engine, checkpointer=checkpointer)
+    snapshot = workflow.get_state(config)
+    values = dict(snapshot.values)
+
+    if values:
+        status = str(values.get("status") or "")
+        if status == "completed":
+            result = materialize_drift_result(values)
+            result["checkpoint_reused"] = True
+            return result
+        if status == "failed":
+            result = resume_drift_workflow(
+                workflow,
+                config=config,
+                reset_failed_step_retries=True,
+            )
+            result["checkpoint_reused"] = True
+            return result
+        if snapshot.next:
+            resumed = workflow.invoke(None, config=config)
+            result = materialize_drift_result(resumed)
+            result["checkpoint_reused"] = True
+            return result
+        raise ValueError(
+            "Checkpointed DRIFT thread is running but has no pending node to resume"
+        )
+
+    initial = _initial_drift_state(
+        query,
+        top_k=top_k,
+        max_depth=max_depth,
+        max_actions_per_depth=max_actions_per_depth,
+        community_top_k=community_top_k,
+        action_concurrency=action_concurrency,
+        primer_folds=primer_folds,
+        primer_concurrency=primer_concurrency,
+        max_step_retries=max_step_retries,
+    )
+    state = workflow.invoke(initial, config=config)
+    result = materialize_drift_result(state)
+    result["checkpoint_reused"] = False
+    return result
+
+
+def run_drift_workflow(
+    engine: GraphRAGEngine,
+    query: str,
+    *,
+    top_k: int = 5,
+    max_depth: int = 2,
+    max_actions_per_depth: int = 2,
+    community_top_k: int = 1,
+    action_concurrency: int = 4,
+    primer_folds: int = 5,
+    primer_concurrency: int = 5,
+    max_step_retries: int = 2,
+    checkpointer: Any | None = None,
+    config: dict[str, Any] | None = None,
+) -> DriftWorkflowState:
+    workflow = build_drift_workflow(
+        engine,
+        checkpointer=checkpointer,
+    )
+    initial = _initial_drift_state(
+        query,
+        top_k=top_k,
+        max_depth=max_depth,
+        max_actions_per_depth=max_actions_per_depth,
+        community_top_k=community_top_k,
+        action_concurrency=action_concurrency,
+        primer_folds=primer_folds,
+        primer_concurrency=primer_concurrency,
+        max_step_retries=max_step_retries,
+    )
     state = workflow.invoke(initial, config=config)
     return materialize_drift_result(state)
