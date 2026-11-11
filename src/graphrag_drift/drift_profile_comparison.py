@@ -10,6 +10,8 @@ DEFAULT_DRIFT_COMPARISON_METRICS = (
     "evidence_count",
     "unique_evidence_count",
     "topic_coverage",
+    "direct_article_source_coverage",
+    "unique_direct_article_source_count",
     "action_count",
     "completed_action_count",
     "epochs",
