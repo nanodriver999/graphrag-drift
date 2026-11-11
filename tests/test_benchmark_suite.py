@@ -178,3 +178,26 @@ def test_run_benchmark_suite_rejects_invalid_expected_topics() -> None:
 
     with pytest.raises(ValueError, match="expected_topics"):
         run_benchmark_suite(cases, runner)
+
+
+def test_summarize_benchmark_runs_attributes_actual_models() -> None:
+    cases = [
+        {"results": [{
+            "mode": "drift",
+            "answer": "a",
+            "successful_model_calls": {"primary": 3, "fallback": 1},
+            "used_fallback_model": True,
+        }]},
+        {"results": [{
+            "mode": "drift",
+            "answer": "b",
+            "successful_model_calls": {"primary": 5},
+            "used_fallback_model": False,
+        }]},
+        # An older cached result must not be treated as a tracked non-fallback.
+        {"results": [{"mode": "drift", "answer": "legacy"}]},
+    ]
+    summary = summarize_benchmark_runs(cases)["modes"]["drift"]
+    assert summary["successful_model_calls"] == {"primary": 8, "fallback": 1}
+    assert summary["model_usage_case_count"] == 2
+    assert summary["fallback_case_rate"] == 0.5

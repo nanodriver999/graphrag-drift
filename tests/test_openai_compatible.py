@@ -51,6 +51,7 @@ def test_openai_compatible_generator_posts_chat_completion() -> None:
         text = generator.generate("summarize this")
 
     assert text == "grounded answer"
+    assert generator.successful_model_usage() == {"test-model": 1}
 
     req = urlopen.call_args.args[0]
     assert req.full_url == "http://localhost:8000/v1/chat/completions"
@@ -233,3 +234,7 @@ def test_openai_compatible_generator_falls_back_after_timeout_exhaustion() -> No
     fallback_body = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
     assert primary_body["model"] == "primary"
     assert fallback_body["model"] == "opencode/fallback"
+
+    assert generator.successful_model_usage() == {"opencode/fallback": 1}
+    generator.reset_model_usage()
+    assert generator.successful_model_usage() == {}

@@ -89,6 +89,9 @@ def compare_drift_profiles(
                 "metrics": metric_rows,
                 "insufficient_answer_rate": insufficient,
                 "insufficient_answer_rate_delta": insufficient_delta,
+                "fallback_case_rate": drift.get("fallback_case_rate"),
+                "model_usage_case_count": drift.get("model_usage_case_count"),
+                "successful_model_calls": drift.get("successful_model_calls"),
             }
         )
 
@@ -176,6 +179,27 @@ def render_drift_profile_comparison_markdown(result: dict[str, Any]) -> str:
             "- insufficient_answer_rate: "
             f"delta={row.get('insufficient_answer_rate_delta')}"
         )
+        lines.append("")
+
+    lines.extend(["", "## Actual model usage (successful replies)", ""])
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        profile = str(row.get("profile") or "")
+        counts = row.get("successful_model_calls")
+        lines.append(f"### {profile}")
+        lines.append("")
+        if isinstance(counts, dict):
+            lines.append(
+                f"- tracked cases: {row.get('model_usage_case_count')}"
+            )
+            lines.append(
+                f"- fallback case rate: {row.get('fallback_case_rate')}"
+            )
+            for model, count in sorted(counts.items()):
+                lines.append(f"- {model}: {count} successful replies")
+        else:
+            lines.append("- Model usage not recorded for this historical run")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
