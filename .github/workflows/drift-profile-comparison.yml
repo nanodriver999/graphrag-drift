@@ -1,6 +1,10 @@
 name: Compare DRIFT search profiles
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "benchmark_requests/drift-profile/**"
   workflow_dispatch:
     inputs:
       cases:
@@ -28,9 +32,39 @@ jobs:
     timeout-minutes: 45
     env:
       NEO4J_AURA_BLOB: ${{ secrets.NEO4J_AURA }}
-      GRAPHRAG_AS_OF_DATE: ${{ inputs.as_of_date }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve comparison request
+        shell: bash
+        env:
+          INPUT_CASES: ${{ inputs.cases }}
+          INPUT_AS_OF_DATE: ${{ inputs.as_of_date }}
+          INPUT_DRIFT_TOP_K: ${{ inputs.drift_top_k }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            cases="${INPUT_CASES}"
+            as_of="${INPUT_AS_OF_DATE}"
+            top_k="${INPUT_DRIFT_TOP_K}"
+          else
+            request_file="$(find benchmark_requests/drift-profile -maxdepth 1 -type f -name '*.json' | sort | tail -n 1)"
+            test -n "$request_file"
+            readarray -t values < <(python - "$request_file" <<'PY'
+          import json, sys
+          payload = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(payload.get("cases", "benchmarks/legal_smoke.jsonl"))
+          print(payload.get("as_of_date", "2026-10-05"))
+          print(payload.get("drift_top_k", 2))
+          PY
+            )
+            cases="${values[0]}"
+            as_of="${values[1]}"
+            top_k="${values[2]}"
+          fi
+          echo "CASES=$cases" >> "$GITHUB_ENV"
+          echo "GRAPHRAG_AS_OF_DATE=$as_of" >> "$GITHUB_ENV"
+          echo "DRIFT_TOP_K=$top_k" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
@@ -179,8 +213,8 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/run_drift_profile_comparison.py \
-            --cases "${{ inputs.cases }}" \
-            --drift-top-k "${{ inputs.drift_top_k }}" \
+            --cases "$CASES" \
+            --drift-top-k "$DRIFT_TOP_K" \
             --profiles economy microsoft-like \
             --baseline-profile economy \
             --output-json "$RUNNER_TEMP/drift-profile-comparison.json" \
