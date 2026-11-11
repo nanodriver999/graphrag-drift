@@ -95,3 +95,44 @@ def test_render_profile_comparison_markdown() -> None:
     assert "| economy | 100.0 | 4.0 | 0.5 | 0.5 | 4.0 | 2.0 | 1.0 |" in rendered
     assert "| microsoft-like | 180.0 | 8.0 | 0.75 | 0.0 | 8.0 | 6.0 | 3.0 |" in rendered
     assert "topic_coverage: delta=0.25" in rendered
+
+
+def test_compare_reports_actual_fallback_usage() -> None:
+    baseline = suite(
+        wall_ms=100,
+        llm_calls=4,
+        coverage=0.5,
+        insufficient=0.0,
+        evidence=4,
+        actions=2,
+        epochs=1,
+    )
+    baseline["summary"]["modes"]["drift"].update({
+        "successful_model_calls": {"primary": 6},
+        "model_usage_case_count": 2,
+        "fallback_case_rate": 0.0,
+    })
+    alternate = suite(
+        wall_ms=200,
+        llm_calls=8,
+        coverage=0.75,
+        insufficient=0.0,
+        evidence=8,
+        actions=4,
+        epochs=2,
+    )
+    alternate["summary"]["modes"]["drift"].update({
+        "successful_model_calls": {"primary": 9, "fallback": 3},
+        "model_usage_case_count": 2,
+        "fallback_case_rate": 0.5,
+    })
+    result = compare_drift_profiles({
+        "economy": baseline,
+        "microsoft-like": alternate,
+    })
+    rows = {row["profile"]: row for row in result["profiles"]}
+    assert rows["microsoft-like"]["successful_model_calls"]["fallback"] == 3
+    assert rows["microsoft-like"]["fallback_case_rate"] == 0.5
+    markdown = render_drift_profile_comparison_markdown(result)
+    assert "Actual model usage" in markdown
+    assert "fallback: 3 successful replies" in markdown
