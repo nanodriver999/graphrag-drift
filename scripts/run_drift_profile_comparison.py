@@ -28,12 +28,22 @@ def _generator() -> OpenAICompatibleTextGenerator:
         raise RuntimeError(
             "OPENAI_COMPATIBLE_BASE_URL and OPENAI_COMPATIBLE_MODEL are required"
         )
+    fallback_models = tuple(
+        item.strip()
+        for item in os.getenv("OPENAI_COMPATIBLE_MODEL_FALLBACKS", "").split(",")
+        if item.strip()
+    )
     return OpenAICompatibleTextGenerator(
         base_url=base_url,
         model=model,
+        fallback_models=fallback_models,
         api_key=os.getenv("OPENAI_COMPATIBLE_API_KEY"),
-        timeout_seconds=float(os.getenv("OPENAI_COMPATIBLE_TIMEOUT_SECONDS", "180")),
+        timeout_seconds=float(os.getenv("OPENAI_COMPATIBLE_TIMEOUT_SECONDS", "120")),
         temperature=float(os.getenv("OPENAI_COMPATIBLE_TEMPERATURE", "0")),
+        max_retries=int(os.getenv("OPENAI_COMPATIBLE_MAX_RETRIES", "1")),
+        retry_backoff_seconds=float(
+            os.getenv("OPENAI_COMPATIBLE_RETRY_BACKOFF_SECONDS", "1")
+        ),
     )
 
 
