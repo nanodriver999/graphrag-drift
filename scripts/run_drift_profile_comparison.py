@@ -81,6 +81,16 @@ def main() -> None:
         help="Maximum concurrent LLM requests sent to the provider.",
     )
     parser.add_argument("--checkpoint-db", default=None)
+    parser.add_argument(
+        "--snapshot-sha256",
+        default=os.getenv("GRAPHRAG_SNAPSHOT_SHA256"),
+        help="SHA-256 of the Neo4j data snapshot; pair with --app-revision.",
+    )
+    parser.add_argument(
+        "--app-revision",
+        default=os.getenv("GRAPHRAG_APP_REVISION"),
+        help="Immutable application code revision; pair with --snapshot-sha256.",
+    )
     parser.add_argument("--progress-json", default=None)
     parser.add_argument("--run-id", default="drift-profile-comparison")
     parser.add_argument("--max-step-retries", type=int, default=1)
@@ -96,16 +106,31 @@ def main() -> None:
         raise RuntimeError("Benchmark suite contains no cases")
 
     base_generator = _generator()
+    if bool(args.snapshot_sha256) != bool(args.app_revision):
+        parser.error("--snapshot-sha256 and --app-revision must be specified together")
+    identity = None
+    if args.snapshot_sha256:
+        identity = {
+            "snapshot_sha256": args.snapshot_sha256,
+            "app_revision": args.app_revision,
+            "as_of_date": os.getenv("GRAPHRAG_AS_OF_DATE", ""),
+            "model": base_generator.model,
+            "fallback_models": list(base_generator.fallback_models),
+            "temperature": base_generator.temperature,
+            "provider_max_inflight": args.provider_max_inflight,
+        }
+
+    # Validate identity before opening Neo4j or resuming any saved LangGraph state.
+    progress = (
+        ProfileBenchmarkProgress.load(args.progress_json, identity=identity)
+        if args.progress_json
+        else None
+    )
     base = Neo4jGraphRAGRetriever.from_settings(Neo4jSettings.from_env())
     checkpoint_context = (
         open_sqlite_checkpointer(args.checkpoint_db)
         if args.checkpoint_db
         else nullcontext(None)
-    )
-    progress = (
-        ProfileBenchmarkProgress.load(args.progress_json)
-        if args.progress_json
-        else None
     )
     try:
         profile_runs: dict[str, dict] = {}
@@ -141,6 +166,8 @@ def main() -> None:
                         "profile": _profile.serialize(),
                         "top_k": args.drift_top_k,
                     }
+                    if identity is not None:
+                        fingerprint_payload["identity"] = identity
                     fingerprint = hashlib.sha256(
                         json.dumps(
                             fingerprint_payload,
@@ -205,6 +232,7 @@ def main() -> None:
             profile_runs,
             baseline_profile=args.baseline_profile,
         )
+        result["benchmark_identity"] = identity
     finally:
         base.close()
 
