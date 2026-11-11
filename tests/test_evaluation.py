@@ -311,3 +311,38 @@ def test_drift_benchmark_records_actual_successful_models_and_resets() -> None:
     assert second["llm_calls"] == 1
     assert second["successful_model_calls"] == {"primary": 1}
     assert second["used_fallback_model"] is False
+
+
+
+def test_benchmark_preserves_direct_dated_chunk_article_provenance() -> None:
+    generator = InstrumentedTextGenerator(FakeGenerator(responses=[]))
+    engine = GraphRAGEngine(retriever=FakeRetriever(), reasoner=DeterministicReasoner())
+    bench = GraphRAGModeBenchmark(
+        local_engine=engine,
+        global_engine=engine,
+        drift_engine=engine,
+        generator_probe=generator,
+    )
+    article = "chunk-article:kr:law:011435:mst:283347:effective:20270220:art:53-3"
+    run = bench.run_drift_only(
+        "query",
+        drift_executor=lambda: {
+            "answer": "원자력안전법 제53조의3",
+            "evidence": [
+                SearchHit(article, "raw law text", 0.9),
+                SearchHit(article, "duplicate retrieval", 0.8),
+                SearchHit("entity:law-topic", "related entity", 0.7),
+                SearchHit("drift-primer", "invented citation", 0.5),
+                SearchHit("drift-action:followup", "synthesized", 0.4),
+            ],
+        },
+    )
+    row = run["results"][0]
+    assert row["unique_direct_article_source_count"] == 1
+    assert row["direct_article_sources"] == [{
+        "law_id": "011435",
+        "article": "53-3",
+        "effective_date": "20270220",
+        "source_id": article,
+    }]
+    assert row["retrieved_evidence_count"] == 3
