@@ -13,6 +13,7 @@ from .drift_workflow import (
     materialize_drift_result,
     resume_drift_workflow,
     run_drift_workflow,
+    run_or_resume_drift_workflow,
 )
 from .drift_profiles import (
     DRIFT_SEARCH_PROFILES,
@@ -47,5 +48,6 @@ __all__ = [
     "materialize_drift_result",
     "resolve_drift_search_profile",
     "resume_drift_workflow",
+    "run_or_resume_drift_workflow",
     "run_drift_workflow",
 ]
