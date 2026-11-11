@@ -105,6 +105,8 @@ class GraphRAGModeBenchmark:
             metrics["completed_action_count"] = int(result.get("completed_action_count", 0))
             metrics["frontier_count"] = int(result.get("frontier_count", 0))
             metrics["epochs"] = int(result.get("epochs", 0))
+            metrics["checkpoint_reused"] = bool(result.get("checkpoint_reused", False))
+            metrics["run_status"] = str(result.get("status") or "completed")
         return metrics
 
     def _run(self, mode: str, fn) -> dict[str, Any]:
@@ -127,10 +129,10 @@ class GraphRAGModeBenchmark:
         drift_action_concurrency: int = 4,
         drift_primer_folds: int = 5,
         drift_primer_concurrency: int = 5,
+        drift_executor: Any | None = None,
     ) -> dict[str, Any]:
-        row = self._run(
-            "drift",
-            lambda: self.drift_engine.drift(
+        if drift_executor is None:
+            drift_executor = lambda: self.drift_engine.drift(
                 query,
                 top_k=drift_top_k,
                 max_depth=drift_max_depth,
@@ -139,7 +141,10 @@ class GraphRAGModeBenchmark:
                 action_concurrency=drift_action_concurrency,
                 primer_folds=drift_primer_folds,
                 primer_concurrency=drift_primer_concurrency,
-            ),
+            )
+        row = self._run(
+            "drift",
+            drift_executor,
         )
         return {
             "format": "graphrag-drift-mode-benchmark-v1",
