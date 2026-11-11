@@ -41,6 +41,8 @@ WITH node, score,
      collect(DISTINCT coalesce(neighbor.name, neighbor.id))[0..5] AS neighbors,
      collect(DISTINCT type(r))[0..5] AS rel_types
 OPTIONAL MATCH (chunk:Chunk)-[:MENTIONS]->(node)
+WHERE coalesce(chunk.officialEffectiveDate, '') = ''
+   OR chunk.officialEffectiveDate <= $as_of_date
 WITH node, score, neighbors, rel_types,
      collect(DISTINCT coalesce(chunk.text, chunk.content))[0..3] AS chunks
 RETURN 'entity:' + coalesce(node.id, elementId(node)) AS id,
@@ -62,6 +64,8 @@ WITH node, score,
      collect(DISTINCT coalesce(neighbor.name, neighbor.id))[0..5] AS neighbors,
      collect(DISTINCT type(r))[0..5] AS rel_types
 OPTIONAL MATCH (chunk:Chunk)-[:MENTIONS]->(node)
+WHERE coalesce(chunk.officialEffectiveDate, '') = ''
+   OR chunk.officialEffectiveDate <= $as_of_date
 WITH node, score, neighbors, rel_types,
      collect(DISTINCT coalesce(chunk.text, chunk.content))[0..3] AS chunks
 RETURN 'entity:' + coalesce(node.id, elementId(node)) AS id,
@@ -103,6 +107,8 @@ CALL (node) {
   WITH node, node.articleKey AS article_key
   OPTIONAL MATCH (sibling:Chunk)
   WHERE article_key IS NOT NULL AND sibling.articleKey = article_key
+  AND (coalesce(sibling.officialEffectiveDate, '') = ''
+       OR sibling.officialEffectiveDate <= $as_of_date)
   WITH sibling
   ORDER BY coalesce(sibling.position, 0), elementId(sibling)
   RETURN collect(coalesce(sibling.text, sibling.content))[0..12] AS article_chunks
@@ -234,6 +240,7 @@ class Neo4jGraphRAGRetriever:
             "vector_index": ENTITY_VECTOR_INDEX,
             "query_vector": vector,
             "candidate_k": candidate_k,
+            "as_of_date": _normalize_as_of_date(self.as_of_date),
         }
         if self.use_hybrid:
             params["fulltext_index"] = ENTITY_FULLTEXT_INDEX
