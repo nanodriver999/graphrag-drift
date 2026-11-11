@@ -5,6 +5,7 @@ from typing import Any, Literal, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from .core import GraphRAGEngine
+from .drift_workflow import run_drift_workflow
 from .llm import Reasoner
 from .models import SearchHit
 from .retrieval import Retriever
@@ -25,6 +26,7 @@ class GraphRAGState(TypedDict, total=False):
     action_concurrency: int
     primer_folds: int
     primer_concurrency: int
+    max_step_retries: int
     depth: int
     followups: list[str]
     evidence: list[SearchHit]
@@ -46,9 +48,8 @@ class GraphRAGState(TypedDict, total=False):
 def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
     """Build one LangGraph entry point for Local, Global, and ranked DRIFT.
 
-    DRIFT intentionally delegates to GraphRAGEngine.drift() so the direct engine
-    and LangGraph execution paths share the same ranked-action implementation.
-    The serialized action graph remains available in the returned state.
+    DRIFT delegates to a resumable LangGraph sub-workflow so primer, ranked action
+    epochs, retries, and final reduce are explicit checkpointable phases.
     """
 
     engine = GraphRAGEngine(retriever, reasoner)
@@ -68,7 +69,8 @@ def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
         )
 
     def drift_ranked_search(state: GraphRAGState) -> GraphRAGState:
-        return engine.drift(
+        return run_drift_workflow(
+            engine,
             state["query"],
             top_k=state.get("top_k", 5),
             max_depth=state.get("max_depth", 2),
@@ -77,6 +79,7 @@ def build_workflow(retriever: Retriever, reasoner: Reasoner | None = None):
             action_concurrency=state.get("action_concurrency", 4),
             primer_folds=state.get("primer_folds", 5),
             primer_concurrency=state.get("primer_concurrency", 5),
+            max_step_retries=state.get("max_step_retries", 2),
         )
 
     graph = StateGraph(GraphRAGState)
