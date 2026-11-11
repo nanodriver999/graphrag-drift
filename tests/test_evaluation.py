@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from threading import Lock
+from time import sleep
 
 from graphrag_drift.core import GraphRAGEngine
 from graphrag_drift.evaluation import GraphRAGModeBenchmark, InstrumentedTextGenerator
 from graphrag_drift.models import CommunityReport, SearchHit
+import pytest
+
 from graphrag_drift.search_llm_reasoner import GraphRAGLLMReasoner
 
 
@@ -134,3 +139,45 @@ def test_mode_benchmark_records_named_drift_profile_settings() -> None:
     assert settings["drift_max_followups"] == 20
     assert settings["drift_max_depth"] == 3
     assert settings["drift_action_concurrency"] == 32
+
+
+
+class BlockingGenerator:
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.active = 0
+        self.max_active = 0
+
+    def generate(self, prompt: str) -> str:
+        with self.lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            sleep(0.05)
+            return prompt
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_instrumented_generator_limits_provider_inflight_requests() -> None:
+    base = BlockingGenerator()
+    generator = InstrumentedTextGenerator(
+        base,
+        max_concurrent_requests=1,
+    )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(generator.generate, ["a", "b", "c", "d"]))
+
+    assert results == ["a", "b", "c", "d"]
+    assert base.max_active == 1
+    assert generator.call_count == 4
+
+
+def test_instrumented_generator_rejects_invalid_provider_limit() -> None:
+    with pytest.raises(ValueError, match="max_concurrent_requests"):
+        InstrumentedTextGenerator(
+            FakeGenerator(responses=[]),
+            max_concurrent_requests=0,
+        )

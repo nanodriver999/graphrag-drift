@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from threading import Lock
+from threading import Lock, Semaphore
 from time import perf_counter
 from typing import Any
 
@@ -15,7 +15,15 @@ class InstrumentedTextGenerator:
     call_count: int = 0
     total_seconds: float = 0.0
     prompts: list[str] = field(default_factory=list)
+    max_concurrent_requests: int | None = None
     _lock: Any = field(default_factory=Lock, init=False, repr=False)
+    _semaphore: Any = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.max_concurrent_requests is not None:
+            if self.max_concurrent_requests < 1:
+                raise ValueError("max_concurrent_requests must be >= 1")
+            self._semaphore = Semaphore(self.max_concurrent_requests)
 
     def reset(self) -> None:
         with self._lock:
@@ -24,6 +32,13 @@ class InstrumentedTextGenerator:
             self.prompts.clear()
 
     def generate(self, prompt: str) -> str:
+        if self._semaphore is None:
+            return self._generate_instrumented(prompt)
+
+        with self._semaphore:
+            return self._generate_instrumented(prompt)
+
+    def _generate_instrumented(self, prompt: str) -> str:
         start = perf_counter()
         try:
             return self.generator.generate(prompt)

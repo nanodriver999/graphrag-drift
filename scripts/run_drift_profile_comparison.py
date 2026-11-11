@@ -49,6 +49,12 @@ def main() -> None:
     )
     parser.add_argument("--baseline-profile", default="economy")
     parser.add_argument("--drift-top-k", type=int, default=2)
+    parser.add_argument(
+        "--provider-max-inflight",
+        type=int,
+        default=1,
+        help="Maximum concurrent LLM requests sent to the provider.",
+    )
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-markdown", default=None)
     args = parser.parse_args()
@@ -64,7 +70,10 @@ def main() -> None:
 
         for profile_name in args.profiles:
             profile = get_drift_search_profile(profile_name)
-            probe = InstrumentedTextGenerator(base_generator)
+            probe = InstrumentedTextGenerator(
+                base_generator,
+                max_concurrent_requests=args.provider_max_inflight,
+            )
             reasoner = GraphRAGLLMReasoner(
                 generator=probe,
                 max_followups=profile.max_followups,
