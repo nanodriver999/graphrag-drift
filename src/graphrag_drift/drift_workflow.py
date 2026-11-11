@@ -426,6 +426,18 @@ def build_drift_workflow(
     return graph.compile(checkpointer=checkpointer)
 
 
+def materialize_drift_result(state: DriftWorkflowState) -> dict[str, Any]:
+    result: dict[str, Any] = dict(state)
+    result["evidence"] = [
+        _hit_from_dict(item)
+        if isinstance(item, dict)
+        else item
+        for item in state.get("evidence", [])
+    ]
+    result.pop("action_graph", None)
+    return result
+
+
 def run_drift_workflow(
     engine: GraphRAGEngine,
     query: str,
@@ -461,4 +473,5 @@ def run_drift_workflow(
         "last_error": "",
         "failed_step": "",
     }
-    return workflow.invoke(initial, config=config)
+    state = workflow.invoke(initial, config=config)
+    return materialize_drift_result(state)
