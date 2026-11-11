@@ -181,3 +181,43 @@ def test_instrumented_generator_rejects_invalid_provider_limit() -> None:
             FakeGenerator(responses=[]),
             max_concurrent_requests=0,
         )
+
+
+def test_drift_only_benchmark_accepts_custom_resumable_executor() -> None:
+    generator = InstrumentedTextGenerator(FakeGenerator(responses=[]))
+    engine = GraphRAGEngine(retriever=FakeRetriever(), reasoner=DeterministicReasoner())
+    benchmark = GraphRAGModeBenchmark(
+        local_engine=engine,
+        global_engine=engine,
+        drift_engine=engine,
+        generator_probe=generator,
+    )
+
+    result = benchmark.run_drift_only(
+        "test query",
+        drift_top_k=1,
+        drift_executor=lambda: {
+            "status": "completed",
+            "checkpoint_reused": True,
+            "evidence": [SearchHit("cached", "cached evidence", 1.0)],
+            "answer": "cached answer",
+            "depth": 1,
+            "followups": [],
+            "primer_source": "community",
+            "primer_score": 80,
+            "primer_report_ids": ["c1"],
+            "primer_fold_count": 1,
+            "action_concurrency": 1,
+            "primer_concurrency": 1,
+            "action_count": 1,
+            "completed_action_count": 1,
+            "frontier_count": 0,
+            "epochs": 1,
+        },
+    )
+
+    row = result["results"][0]
+    assert row["answer"] == "cached answer"
+    assert row["checkpoint_reused"] is True
+    assert row["run_status"] == "completed"
+    assert row["llm_calls"] == 0
