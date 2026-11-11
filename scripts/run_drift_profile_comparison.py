@@ -15,7 +15,11 @@ from graphrag_drift import (
     open_sqlite_checkpointer,
     run_or_resume_drift_workflow,
 )
-from graphrag_drift.benchmark_suite import load_benchmark_cases, run_benchmark_suite
+from graphrag_drift.benchmark_suite import (
+    BenchmarkCase,
+    load_benchmark_cases,
+    run_benchmark_suite,
+)
 from graphrag_drift.config import Neo4jSettings
 from graphrag_drift.drift_profile_comparison import (
     compare_drift_profiles,
@@ -52,11 +56,31 @@ def _generator() -> OpenAICompatibleTextGenerator:
     )
 
 
+def select_benchmark_cases(
+    cases: list[BenchmarkCase],
+    case_ids: list[str],
+) -> list[BenchmarkCase]:
+    """Filter to requested cases in dataset order for resumable case runs."""
+    if not case_ids:
+        return cases
+    requested = set(case_ids)
+    unknown = sorted(requested - {case.id for case in cases})
+    if unknown:
+        raise ValueError(f"Unknown benchmark case ID(s): {', '.join(unknown)}")
+    return [case for case in cases if case.id in requested]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compare named DRIFT profiles on the same benchmark cases."
     )
     parser.add_argument("--cases", default="benchmarks/legal_smoke.jsonl")
+    parser.add_argument(
+        "--case-id",
+        action="append",
+        default=[],
+        help="Run only this benchmark case ID (repeatable); reuse cached others later.",
+    )
     parser.add_argument(
         "--profiles",
         nargs="+",
@@ -78,7 +102,10 @@ def main() -> None:
     parser.add_argument("--output-markdown", default=None)
     args = parser.parse_args()
 
-    cases = load_benchmark_cases(args.cases)
+    try:
+        cases = select_benchmark_cases(load_benchmark_cases(args.cases), args.case_id)
+    except ValueError as exc:
+        parser.error(str(exc))
     if not cases:
         raise RuntimeError("Benchmark suite contains no cases")
 
