@@ -66,3 +66,66 @@ def evaluate_law_coverage(
         current_versions=current,
         future_versions=future,
     )
+
+
+
+@dataclass(frozen=True)
+class ArticleVersion:
+    law_id: str
+    article: str
+    effective_date: str
+    article_key: str
+
+
+@dataclass(frozen=True)
+class ArticleCoverage:
+    law_id: str
+    article: str
+    as_of_date: str
+    current_versions: tuple[ArticleVersion, ...]
+    future_versions: tuple[ArticleVersion, ...]
+    unknown_date_versions: tuple[ArticleVersion, ...]
+
+    @property
+    def has_current_article(self) -> bool:
+        return bool(self.current_versions)
+
+    @property
+    def latest_current(self) -> ArticleVersion | None:
+        return max(
+            self.current_versions,
+            key=lambda item: item.effective_date,
+            default=None,
+        )
+
+
+def evaluate_article_coverage(
+    law_id: str,
+    article: str,
+    versions: Iterable[ArticleVersion],
+    *,
+    as_of_date: str,
+) -> ArticleCoverage:
+    """Require an actually dated, effective article; never infer from law-wide coverage."""
+    target = normalize_date(as_of_date)
+    matching = [
+        row for row in versions
+        if row.law_id == law_id and row.article == article
+    ]
+    current = tuple(sorted(
+        (item for item in matching if item.effective_date and item.effective_date <= target),
+        key=lambda item: item.effective_date,
+    ))
+    future = tuple(sorted(
+        (item for item in matching if item.effective_date and item.effective_date > target),
+        key=lambda item: item.effective_date,
+    ))
+    unknown = tuple(item for item in matching if not item.effective_date)
+    return ArticleCoverage(
+        law_id=law_id,
+        article=article,
+        as_of_date=target,
+        current_versions=current,
+        future_versions=future,
+        unknown_date_versions=unknown,
+    )
