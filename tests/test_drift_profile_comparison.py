@@ -92,8 +92,8 @@ def test_render_profile_comparison_markdown() -> None:
     rendered = render_drift_profile_comparison_markdown(result)
 
     assert "# DRIFT Profile Comparison" in rendered
-    assert "| economy | 100.0 | 4.0 | 0.5 | 0.5 | 4.0 | 2.0 | 1.0 |" in rendered
-    assert "| microsoft-like | 180.0 | 8.0 | 0.75 | 0.0 | 8.0 | 6.0 | 3.0 |" in rendered
+    assert "| economy | 100.0 | 4.0 | 0.5 | - | 0.5 | 4.0 | 2.0 | 1.0 |" in rendered
+    assert "| microsoft-like | 180.0 | 8.0 | 0.75 | - | 0.0 | 8.0 | 6.0 | 3.0 |" in rendered
     assert "topic_coverage: delta=0.25" in rendered
 
 
