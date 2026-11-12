@@ -40,6 +40,7 @@ LIMIT $top_k
 
 COMMUNITY_REPORT_QUERY = """
 MATCH (c:Community)
+WHERE $allowed_community_ids IS NULL OR c.id IN $allowed_community_ids
 OPTIONAL MATCH (c)-[:HAS_REPORT]->(report:CommunityReport)
 WITH c, report,
      CASE
@@ -92,7 +93,12 @@ class Neo4jRetriever:
         ]
 
     def community_reports(self, query: str, *, top_k: int = 5) -> list[CommunityReport]:
-        rows = self._run(COMMUNITY_REPORT_QUERY, query=query, top_k=top_k)
+        rows = self._run(
+            COMMUNITY_REPORT_QUERY,
+            query=query,
+            top_k=top_k,
+            allowed_community_ids=None,
+        )
         return [
             CommunityReport(
                 id=str(row["id"]),

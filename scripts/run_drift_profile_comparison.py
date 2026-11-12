@@ -106,6 +106,13 @@ def main() -> None:
         raise RuntimeError("Benchmark suite contains no cases")
 
     base_generator = _generator()
+    raw_allowed = os.getenv("GRAPHRAG_ALLOWED_COMMUNITY_IDS")
+    allowed_community_ids = (
+        None if raw_allowed is None
+        else tuple(sorted({
+            item.strip() for item in raw_allowed.split(",") if item.strip()
+        }))
+    )
     if bool(args.snapshot_sha256) != bool(args.app_revision):
         parser.error("--snapshot-sha256 and --app-revision must be specified together")
     identity = None
@@ -118,6 +125,10 @@ def main() -> None:
             "fallback_models": list(base_generator.fallback_models),
             "temperature": base_generator.temperature,
             "provider_max_inflight": args.provider_max_inflight,
+            "allowed_community_ids": (
+                None if allowed_community_ids is None
+                else list(allowed_community_ids)
+            ),
         }
 
     # Validate identity before opening Neo4j or resuming any saved LangGraph state.
@@ -126,7 +137,10 @@ def main() -> None:
         if args.progress_json
         else None
     )
-    base = Neo4jGraphRAGRetriever.from_settings(Neo4jSettings.from_env())
+    base = Neo4jGraphRAGRetriever.from_settings(
+        Neo4jSettings.from_env(),
+        allowed_community_ids=allowed_community_ids,
+    )
     checkpoint_context = (
         open_sqlite_checkpointer(args.checkpoint_db)
         if args.checkpoint_db
@@ -168,6 +182,10 @@ def main() -> None:
                     }
                     if identity is not None:
                         fingerprint_payload["identity"] = identity
+                    elif allowed_community_ids is not None:
+                        fingerprint_payload["allowed_community_ids"] = list(
+                            allowed_community_ids
+                        )
                     fingerprint = hashlib.sha256(
                         json.dumps(
                             fingerprint_payload,
@@ -233,6 +251,16 @@ def main() -> None:
             baseline_profile=args.baseline_profile,
         )
         result["benchmark_identity"] = identity
+        result["community_source_filter"] = {
+            "status": (
+                "unrestricted" if allowed_community_ids is None
+                else "explicit_allowlist"
+            ),
+            "allowed_community_ids": (
+                None if allowed_community_ids is None
+                else list(allowed_community_ids)
+            ),
+        }
     finally:
         base.close()
 

@@ -202,6 +202,8 @@ class Neo4jGraphRAGRetriever:
     use_hybrid: bool = True
     include_chunks: bool = True
     as_of_date: str | None = None
+    # None: existing unrestricted behavior; empty tuple: allow no community reports.
+    allowed_community_ids: tuple[str, ...] | None = None
 
     @classmethod
     def from_settings(
@@ -211,6 +213,7 @@ class Neo4jGraphRAGRetriever:
         use_hybrid: bool = True,
         include_chunks: bool = True,
         as_of_date: str | None = None,
+        allowed_community_ids: tuple[str, ...] | None = None,
     ) -> "Neo4jGraphRAGRetriever":
         driver = GraphDatabase.driver(
             settings.uri,
@@ -223,6 +226,7 @@ class Neo4jGraphRAGRetriever:
             use_hybrid=use_hybrid,
             include_chunks=include_chunks,
             as_of_date=_normalize_as_of_date(as_of_date),
+            allowed_community_ids=allowed_community_ids,
         )
 
     def close(self) -> None:
@@ -298,7 +302,14 @@ class Neo4jGraphRAGRetriever:
     def community_reports(self, query: str, *, top_k: int = 5) -> list[CommunityReport]:
         records, _, _ = self.driver.execute_query(
             COMMUNITY_REPORT_QUERY,
-            parameters_={"query": query, "top_k": top_k},
+            parameters_={
+                "query": query,
+                "top_k": top_k,
+                "allowed_community_ids": (
+                    None if self.allowed_community_ids is None
+                    else list(self.allowed_community_ids)
+                ),
+            },
             database_=self.database,
         )
         return [
