@@ -42,3 +42,38 @@ Next step: generate source-date-specific Community Reports from a filtered
 snapshot and store/restore them with source provenance in Neo4j. Until that
 happens, use this audit as a warning rather than treating every undated report
 as reliable current law.
+
+
+## Optional cached-report retrieval policies
+
+`CachedCommunityReportRetriever` supports date-aware report filtering when
+`as_of_date` is supplied:
+
+- `temporal_policy="none"` (default): historical behavior; all cached reports rank
+  normally, including reports with unknown temporal provenance.
+- `temporal_policy="exclude_future"`: omit a report when its *input* contains
+  any versioned law article effective after the cutoff. Legacy input-unknown
+  reports remain retrievable and must not be treated as certified current law.
+- `temporal_policy="require_date_clear_input"`: also omit input-unknown reports
+  and reports with non-dated evidence or Entity descriptions. At least one
+  dated original law article must exist in its input. This still **does not**
+  establish claim-level entailment of the generated report text.
+
+Example:
+
+```python
+retriever = CachedCommunityReportRetriever(
+    local_retriever=neo4j_retriever,
+    report_store=FileCommunityReportStore.from_relative_manifest(
+        data_root, "community_reports/38228132813f/manifest.json"
+    ),
+    as_of_date="2026-10-05",
+    temporal_policy="exclude_future",
+)
+```
+
+These options affect the **file-cached Community Report adapter only**. The
+default Neo4j-backed `COMMUNITY_REPORT_QUERY` still needs report-level source
+metadata to support equivalent query-time filtering. An existing snapshot
+cannot be retroactively declared legally current merely because a separate
+cache was audited.
