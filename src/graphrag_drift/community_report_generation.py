@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .global_llm_reasoner import TextGenerator
+from .community_report_temporal_provenance import collect_community_source_provenance
 
 REPORT_FORMAT = "graphrag-drift-community-report-v1"
 MANIFEST_FORMAT = "graphrag-drift-community-report-manifest-v1"
@@ -140,6 +141,7 @@ class CommunityReportCacheBuilder:
         report_rows: list[dict[str, Any]] = []
         generated = 0
         reused = 0
+        enriched = 0
 
         for row in input_manifest.get("communities", []):
             community_id = str(row["community_id"])
@@ -147,10 +149,27 @@ class CommunityReportCacheBuilder:
             content_hash = report_content_hash(dump_sha, context_sha)
             relative_file = Path("community_reports") / prefix / f"community-{community_id}.json"
             output_file = root / relative_file
+            overview = _load_json(root / str(row["overview_file"]))
+            evidence_parts = [
+                _load_json(root / str(part_row["file"]))
+                for part_row in row.get("parts", [])
+            ]
+            source_provenance = collect_community_source_provenance(
+                overview, evidence_parts,
+            )
 
             if output_file.exists():
                 existing = _load_json(output_file)
                 if existing.get("content_hash") == content_hash:
+                    # Source provenance comes from the same immutable input
+                    # context. Upgrade old cached reports without any LLM call.
+                    if existing.get("source_provenance") != source_provenance:
+                        existing["source_provenance"] = source_provenance
+                        output_file.write_text(
+                            json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+                            encoding="utf-8",
+                        )
+                        enriched += 1
                     reused += 1
                     report_rows.append(
                         {
@@ -162,11 +181,10 @@ class CommunityReportCacheBuilder:
                     )
                     continue
 
-            overview = _load_json(root / str(row["overview_file"]))
-            part_summaries = []
-            for part_row in row.get("parts", []):
-                part = _load_json(root / str(part_row["file"]))
-                part_summaries.append(self._summarize_part(community_id, part))
+            part_summaries = [
+                self._summarize_part(community_id, part)
+                for part in evidence_parts
+            ]
 
             report_body = self._generate_report(community_id, overview, part_summaries)
             payload = {
@@ -180,6 +198,7 @@ class CommunityReportCacheBuilder:
                     "content_hash_method": HASH_METHOD,
                 },
                 "content_hash": content_hash,
+                "source_provenance": source_provenance,
                 "report": report_body,
             }
             output_file.write_text(
@@ -214,5 +233,71 @@ class CommunityReportCacheBuilder:
             "manifest": manifest,
             "generated": generated,
             "reused": reused,
+            "enriched": enriched,
             "manifest_path": str(output_dir / "manifest.json"),
         }
+
+
+
+def enrich_cached_community_report_provenance(
+    repository_root: str | Path,
+    *,
+    manifest_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Upgrade existing cached reports using source JSON alone (no LLM calls).
+
+    Require an exact source context hash to avoid assigning newer source
+    metadata to a report produced from an older/different evidence context.
+    """
+    root = Path(repository_root)
+    if manifest_path is None:
+        dump_sha = str(_load_json(root / "data/manifest.json")["dump"]["zip_sha256"])
+        manifest_file = root / "community_reports" / dump_sha[:12] / "manifest.json"
+    else:
+        manifest_file = root / manifest_path
+    manifest = _load_json(manifest_file)
+    inputs = _load_json(root / "community_report_inputs/manifest.json")
+    indexed = {
+        str(item["community_id"]): item
+        for item in inputs.get("communities", [])
+    }
+    refreshed = 0
+    unmodified = 0
+    for row in manifest.get("reports", []):
+        community_id = str(row["community_id"])
+        if community_id not in indexed:
+            raise ValueError(f"Missing report input for {community_id}")
+        source = indexed[community_id]
+        report_file = root / str(row["file"])
+        payload = _load_json(report_file)
+        if (
+            str(payload.get("source", {}).get("context_sha256") or "")
+            != str(source["context_sha256"])
+        ):
+            raise ValueError(
+                f"Context hash mismatch: {community_id}; do not rewrite "
+                "provenance for a different summary input"
+            )
+
+        overview = _load_json(root / str(source["overview_file"]))
+        parts = [
+            _load_json(root / str(part["file"]))
+            for part in source.get("parts", [])
+        ]
+        provenance = collect_community_source_provenance(overview, parts)
+        if payload.get("source_provenance") == provenance:
+            unmodified += 1
+            continue
+        payload["source_provenance"] = provenance
+        report_file.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        refreshed += 1
+    return {
+        "format": "graphrag-drift-community-provenance-enrichment-v1",
+        "manifest": str(manifest_file),
+        "report_count": len(manifest.get("reports", [])),
+        "enriched": refreshed,
+        "unchanged": unmodified,
+    }
