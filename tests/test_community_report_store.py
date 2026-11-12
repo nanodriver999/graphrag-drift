@@ -100,3 +100,20 @@ def test_store_preserves_date_provenance_if_present(tmp_path: Path) -> None:
         tmp_path, manifest_rel,
     ).load()
     assert result[0].source_provenance == provenance
+
+
+
+def test_community_report_remains_hashable_with_source_metadata() -> None:
+    from graphrag_drift.models import CommunityReport
+
+    a = CommunityReport(
+        "leiden-1", "same summary", 0.9,
+        source_provenance={"source_article_versions": [{"article_key": "a"}]},
+    )
+    b = CommunityReport(
+        "leiden-1", "same summary", 0.9,
+        source_provenance={"source_article_versions": [{"article_key": "b"}]},
+    )
+    assert a == b
+    assert len({a, b}) == 1
+    assert hash(a) == hash(b)
