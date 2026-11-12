@@ -117,8 +117,8 @@ def test_fetch_rejects_wrong_law_id_and_wrong_effective_version(version) -> None
 
 def test_fetch_rejects_future_article_even_in_2026_law(version) -> None:
     bad = SOURCE_XML.replace(
-        b"<조문시행일자>20260519</조문시행일자>",
-        b"<조문시행일자>20270101</조문시행일자>",
+        "<조문시행일자>20260519</조문시행일자>".encode("utf-8"),
+        "<조문시행일자>20270101</조문시행일자>".encode("utf-8"),
     )
     with pytest.raises(ValueError, match="future"):
         parse_official_article_xml(bad, version)
@@ -126,8 +126,8 @@ def test_fetch_rejects_future_article_even_in_2026_law(version) -> None:
 
 def test_fetch_rejects_missing_target_article(version) -> None:
     bad = SOURCE_XML.replace(
-        b"<조문가지번호>3</조문가지번호>",
-        b"<조문가지번호>2</조문가지번호>",
+        "<조문가지번호>3</조문가지번호>".encode("utf-8"),
+        "<조문가지번호>2</조문가지번호>".encode("utf-8"),
     )
     with pytest.raises(ValueError, match="Expected one article"):
         parse_official_article_xml(bad, version)
