@@ -236,3 +236,68 @@ class CommunityReportCacheBuilder:
             "enriched": enriched,
             "manifest_path": str(output_dir / "manifest.json"),
         }
+
+
+
+def enrich_cached_community_report_provenance(
+    repository_root: str | Path,
+    *,
+    manifest_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Upgrade existing cached reports using source JSON alone (no LLM calls).
+
+    Require an exact source context hash to avoid assigning newer source
+    metadata to a report produced from an older/different evidence context.
+    """
+    root = Path(repository_root)
+    if manifest_path is None:
+        dump_sha = str(_load_json(root / "data/manifest.json")["dump"]["zip_sha256"])
+        manifest_file = root / "community_reports" / dump_sha[:12] / "manifest.json"
+    else:
+        manifest_file = root / manifest_path
+    manifest = _load_json(manifest_file)
+    inputs = _load_json(root / "community_report_inputs/manifest.json")
+    indexed = {
+        str(item["community_id"]): item
+        for item in inputs.get("communities", [])
+    }
+    refreshed = 0
+    unmodified = 0
+    for row in manifest.get("reports", []):
+        community_id = str(row["community_id"])
+        if community_id not in indexed:
+            raise ValueError(f"Missing report input for {community_id}")
+        source = indexed[community_id]
+        report_file = root / str(row["file"])
+        payload = _load_json(report_file)
+        if (
+            str(payload.get("source", {}).get("context_sha256") or "")
+            != str(source["context_sha256"])
+        ):
+            raise ValueError(
+                f"Context hash mismatch: {community_id}; do not rewrite "
+                "provenance for a different summary input"
+            )
+
+        overview = _load_json(root / str(source["overview_file"]))
+        parts = [
+            _load_json(root / str(part["file"]))
+            for part in source.get("parts", [])
+        ]
+        provenance = collect_community_source_provenance(overview, parts)
+        if payload.get("source_provenance") == provenance:
+            unmodified += 1
+            continue
+        payload["source_provenance"] = provenance
+        report_file.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        refreshed += 1
+    return {
+        "format": "graphrag-drift-community-provenance-enrichment-v1",
+        "manifest": str(manifest_file),
+        "report_count": len(manifest.get("reports", [])),
+        "enriched": refreshed,
+        "unchanged": unmodified,
+    }
