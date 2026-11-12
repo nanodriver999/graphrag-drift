@@ -106,6 +106,11 @@ def main() -> None:
         raise RuntimeError("Benchmark suite contains no cases")
 
     base_generator = _generator()
+    min_community_term_overlap = int(
+        os.getenv("GRAPHRAG_MIN_COMMUNITY_TERM_OVERLAP", "0")
+    )
+    if min_community_term_overlap < 0:
+        parser.error("GRAPHRAG_MIN_COMMUNITY_TERM_OVERLAP must be >= 0")
     raw_allowed = os.getenv("GRAPHRAG_ALLOWED_COMMUNITY_IDS")
     allowed_community_ids = (
         None if raw_allowed is None
@@ -125,6 +130,7 @@ def main() -> None:
             "fallback_models": list(base_generator.fallback_models),
             "temperature": base_generator.temperature,
             "provider_max_inflight": args.provider_max_inflight,
+            "min_community_term_overlap": min_community_term_overlap,
             "allowed_community_ids": (
                 None if allowed_community_ids is None
                 else list(allowed_community_ids)
@@ -140,6 +146,7 @@ def main() -> None:
     base = Neo4jGraphRAGRetriever.from_settings(
         Neo4jSettings.from_env(),
         allowed_community_ids=allowed_community_ids,
+        min_community_term_overlap=min_community_term_overlap,
     )
     checkpoint_context = (
         open_sqlite_checkpointer(args.checkpoint_db)
@@ -182,9 +189,13 @@ def main() -> None:
                     }
                     if identity is not None:
                         fingerprint_payload["identity"] = identity
-                    elif allowed_community_ids is not None:
-                        fingerprint_payload["allowed_community_ids"] = list(
-                            allowed_community_ids
+                    else:
+                        if allowed_community_ids is not None:
+                            fingerprint_payload["allowed_community_ids"] = list(
+                                allowed_community_ids
+                            )
+                        fingerprint_payload["min_community_term_overlap"] = (
+                            min_community_term_overlap
                         )
                     fingerprint = hashlib.sha256(
                         json.dumps(
@@ -252,6 +263,7 @@ def main() -> None:
         )
         result["benchmark_identity"] = identity
         result["community_source_filter"] = {
+            "min_community_term_overlap": min_community_term_overlap,
             "status": (
                 "unrestricted" if allowed_community_ids is None
                 else "explicit_allowlist"
