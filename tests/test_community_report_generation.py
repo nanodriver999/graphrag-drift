@@ -122,3 +122,63 @@ def test_builder_generates_versioned_report_and_reuses_cache(tmp_path: Path) -> 
     assert second["generated"] == 0
     assert second["reused"] == 1
     assert len(generator.prompts) == 2
+
+
+
+def test_old_cached_report_is_enriched_offline_without_new_model_calls(
+    tmp_path: Path,
+) -> None:
+    root = _repo(tmp_path)
+    evidence_path = (
+        root / "community_report_inputs/leiden-8/evidence_parts/part-000.json"
+    )
+    _write(evidence_path, {
+        "evidence": [{
+            "labels": ["Chunk"],
+            "properties": {
+                "articleKey": "kr:law:011435:mst:283347:effective:20270220:art:53-3",
+                "officialEffectiveDate": "20270220",
+                "text": "law article",
+            },
+        }],
+    })
+    generator = FakeGenerator(responses=[
+        json.dumps({
+            "summary": "evidence overview",
+            "key_points": ["one"],
+            "entities": [],
+        }),
+        json.dumps({
+            "title": "safety report",
+            "summary": "claim",
+            "key_findings": ["one"],
+            "entities": [],
+            "notes": "",
+        }),
+    ])
+    builder = CommunityReportCacheBuilder(generator=generator)
+    first = builder.build(root)
+    path = root / first["manifest"]["reports"][0]["file"]
+    old = json.loads(path.read_text(encoding="utf-8"))
+    assert old["source_provenance"]["source_article_versions"][0][
+        "effective_date"
+    ] == "20270220"
+    original_body = old["report"]
+    del old["source_provenance"]
+    _write(path, old)
+
+    second = builder.build(root)
+    assert second["generated"] == 0
+    assert second["reused"] == 1
+    assert second["enriched"] == 1
+    assert len(generator.prompts) == 2
+    enriched = json.loads(path.read_text(encoding="utf-8"))
+    assert enriched["report"] == original_body
+    assert enriched["source_provenance"]["source_article_versions"][0][
+        "effective_date"
+    ] == "20270220"
+
+    third = builder.build(root)
+    assert third["enriched"] == 0
+    assert third["reused"] == 1
+    assert len(generator.prompts) == 2
