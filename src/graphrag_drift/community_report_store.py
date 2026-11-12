@@ -72,11 +72,18 @@ class FileCommunityReportStore:
             text_parts = [title.strip(), summary.strip()]
             text_parts.extend(item.strip() for item in findings if item.strip())
 
+            provenance = payload.get("source_provenance")
+            if provenance is not None and not isinstance(provenance, dict):
+                raise ValueError(
+                    f"Cached report source_provenance must be an object: {report_path}"
+                )
+
             reports.append(
                 CommunityReport(
                     id=str(community_id),
                     summary="\n".join(text_parts),
                     score=1.0,
+                    source_provenance=provenance,
                 )
             )
 
