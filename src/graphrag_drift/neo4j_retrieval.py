@@ -48,6 +48,12 @@ WITH c, report,
        WHEN toLower(coalesce(c.title, c.name, '')) CONTAINS toLower($query) THEN 1.0
        ELSE coalesce(report.rank, c.rank, 0.0)
      END AS score
+WITH c, report, score,
+     size([term IN $search_terms
+           WHERE toLower(coalesce(report.summary, c.summary, '') + ' ' +
+                         coalesce(c.title, c.name, '')) CONTAINS term
+     ]) AS matched_terms
+WHERE $min_term_overlap = 0 OR matched_terms >= $min_term_overlap
 RETURN coalesce(report.id, c.id, elementId(c)) AS id,
        coalesce(report.summary, c.summary, c.title, c.name, '') AS summary,
        toFloat(score) AS score
@@ -98,6 +104,8 @@ class Neo4jRetriever:
             query=query,
             top_k=top_k,
             allowed_community_ids=None,
+            search_terms=[],
+            min_term_overlap=0,
         )
         return [
             CommunityReport(
