@@ -204,6 +204,7 @@ class Neo4jGraphRAGRetriever:
     as_of_date: str | None = None
     # None: existing unrestricted behavior; empty tuple: allow no community reports.
     allowed_community_ids: tuple[str, ...] | None = None
+    min_community_term_overlap: int = 0
 
     @classmethod
     def from_settings(
@@ -214,6 +215,7 @@ class Neo4jGraphRAGRetriever:
         include_chunks: bool = True,
         as_of_date: str | None = None,
         allowed_community_ids: tuple[str, ...] | None = None,
+        min_community_term_overlap: int = 0,
     ) -> "Neo4jGraphRAGRetriever":
         driver = GraphDatabase.driver(
             settings.uri,
@@ -227,6 +229,7 @@ class Neo4jGraphRAGRetriever:
             include_chunks=include_chunks,
             as_of_date=_normalize_as_of_date(as_of_date),
             allowed_community_ids=allowed_community_ids,
+            min_community_term_overlap=min_community_term_overlap,
         )
 
     def close(self) -> None:
@@ -300,11 +303,15 @@ class Neo4jGraphRAGRetriever:
         return _rerank_hits(query, hits, top_k=top_k)
 
     def community_reports(self, query: str, *, top_k: int = 5) -> list[CommunityReport]:
+        if self.min_community_term_overlap < 0:
+            raise ValueError("min_community_term_overlap must be >= 0")
         records, _, _ = self.driver.execute_query(
             COMMUNITY_REPORT_QUERY,
             parameters_={
                 "query": query,
                 "top_k": top_k,
+                "search_terms": _query_terms(query),
+                "min_term_overlap": self.min_community_term_overlap,
                 "allowed_community_ids": (
                     None if self.allowed_community_ids is None
                     else list(self.allowed_community_ids)
