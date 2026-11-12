@@ -7,6 +7,7 @@ from pathlib import Path
 
 from graphrag_drift.community_report_generation import (
     CommunityReportCacheBuilder,
+    enrich_cached_community_report_provenance,
     REPORT_FORMAT,
     report_content_hash,
 )
@@ -182,3 +183,37 @@ def test_old_cached_report_is_enriched_offline_without_new_model_calls(
     assert third["enriched"] == 0
     assert third["reused"] == 1
     assert len(generator.prompts) == 2
+
+
+
+def test_offline_provenance_enrichment_rejects_stale_input_context(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    generator = FakeGenerator(responses=[
+        json.dumps({"summary": "part", "key_points": ["one"], "entities": []}),
+        json.dumps({
+            "title": "report", "summary": "summary",
+            "key_findings": ["one"], "entities": [], "notes": "",
+        }),
+    ])
+    result = CommunityReportCacheBuilder(generator).build(root)
+    report = root / result["manifest"]["reports"][0]["file"]
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    del payload["source_provenance"]
+    _write(report, payload)
+
+    enriched = enrich_cached_community_report_provenance(root)
+    assert enriched["report_count"] == 1
+    assert enriched["enriched"] == 1
+    assert enriched["unchanged"] == 0
+    assert len(generator.prompts) == 2
+
+    repeat = enrich_cached_community_report_provenance(root)
+    assert repeat["enriched"] == 0
+    assert repeat["unchanged"] == 1
+
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    payload["source"]["context_sha256"] = "c" * 64
+    _write(report, payload)
+    import pytest
+    with pytest.raises(ValueError, match="Context hash mismatch"):
+        enrich_cached_community_report_provenance(root)
