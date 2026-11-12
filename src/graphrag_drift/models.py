@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -17,7 +17,7 @@ class CommunityReport:
     score: float = 1.0
     # Optional input-context lineage for cached/generated reports. This is not
     # proof that each sentence of the summary is supported by those sources.
-    source_provenance: dict[str, object] | None = None
+    source_provenance: dict[str, object] | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
