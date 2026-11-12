@@ -11,8 +11,8 @@ from urllib import error, request
 
 _RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 _SENSITIVE_ERROR_FIELD = re.compile(
-    r"(?i)\\b(authorization|api[_-]?key|access[_-]?token|password|secret)"
-    r"\\s*[:=]\\s*[^\\s,;]+"
+    r"(?i)\b(authorization|api[_-]?key|access[_-]?token|password|secret)"
+    r"\s*[:=]\s*[^\s,;]+"
 )
 
 
@@ -38,8 +38,8 @@ def _safe_http_error_detail(exc: error.HTTPError) -> str:
     detail = body["error"].get("message")
     if not isinstance(detail, str) or not detail.strip():
         return ""
-    safe = _SENSITIVE_ERROR_FIELD.sub(r"\\1=[REDACTED]", detail)
-    return safe.replace("\\n", " ").replace("\\r", " ").strip()[:350]
+    safe = _SENSITIVE_ERROR_FIELD.sub(r"\1=[REDACTED]", detail)
+    return safe.replace("\n", " ").replace("\r", " ").strip()[:350]
 
 
 @dataclass(frozen=True)
