@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
@@ -238,3 +239,49 @@ def test_openai_compatible_generator_falls_back_after_timeout_exhaustion() -> No
     assert generator.successful_model_usage() == {"opencode/fallback": 1}
     generator.reset_model_usage()
     assert generator.successful_model_usage() == {}
+
+
+
+def test_openai_generator_reports_sanitized_gateway_root_cause() -> None:
+    generator = OpenAICompatibleTextGenerator(
+        base_url="http://localhost:8000",
+        model="beam-free",
+        max_retries=0,
+    )
+    upstream = HTTPError(
+        "http://localhost:8000/v1/chat/completions",
+        502,
+        "Bad Gateway",
+        hdrs=None,
+        fp=BytesIO(json.dumps({
+            "error": {
+                "type": "upstream_error",
+                "message": "OpenCode HTTP 429: provider rate limit. api_key=secret-token",
+            }
+        }).encode("utf-8")),
+    )
+    with patch(
+        "graphrag_drift.openai_compatible.request.urlopen",
+        side_effect=upstream,
+    ):
+        with pytest.raises(HTTPError, match="OpenCode HTTP 429") as exc:
+            generator.generate("detailed legal primer")
+    assert "rate limit" in str(exc.value)
+    assert "secret-token" not in str(exc.value)
+    assert "api_key=[REDACTED]" in str(exc.value)
+
+
+def test_openai_generator_does_not_require_error_body_for_gateway_failure() -> None:
+    generator = OpenAICompatibleTextGenerator(
+        base_url="http://localhost:8000", model="beam-free", max_retries=0,
+    )
+    upstream = HTTPError(
+        "http://localhost:8000/v1/chat/completions",
+        502, "Bad Gateway", hdrs=None, fp=None,
+    )
+    with patch(
+        "graphrag_drift.openai_compatible.request.urlopen",
+        side_effect=upstream,
+    ):
+        with pytest.raises(HTTPError, match="Bad Gateway"):
+            generator.generate("test")

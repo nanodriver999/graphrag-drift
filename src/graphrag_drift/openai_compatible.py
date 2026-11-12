@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from threading import Lock
@@ -9,6 +10,36 @@ from urllib import error, request
 
 
 _RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+_SENSITIVE_ERROR_FIELD = re.compile(
+    r"(?i)\b(authorization|api[_-]?key|access[_-]?token|password|secret)"
+    r"\s*[:=]\s*[^\s,;]+"
+)
+
+
+def _safe_http_error_detail(exc: error.HTTPError) -> str:
+    """Extract a short upstream failure reason without dumping request secrets.
+
+    The OpenCode gateway wraps upstream HTTP failures in a JSON error body.
+    By default urllib prints only 'HTTP Error 502: Bad Gateway', which obscures
+    useful distinctions like rate limits, authorization failures and timeouts.
+    """
+    try:
+        raw = exc.read(2048)
+    except (AttributeError, OSError, TypeError):
+        return ""
+    if not raw:
+        return ""
+    try:
+        body = json.loads(raw.decode("utf-8", "replace"))
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    if not isinstance(body, dict) or not isinstance(body.get("error"), dict):
+        return ""
+    detail = body["error"].get("message")
+    if not isinstance(detail, str) or not detail.strip():
+        return ""
+    safe = _SENSITIVE_ERROR_FIELD.sub(r"\1=[REDACTED]", detail)
+    return safe.replace("\n", " ").replace("\r", " ").strip()[:350]
 
 
 @dataclass(frozen=True)
@@ -90,6 +121,15 @@ class OpenAICompatibleTextGenerator:
             except error.HTTPError as exc:
                 retryable = exc.code in _RETRYABLE_HTTP_STATUS
                 if not retryable or attempt >= self.max_retries:
+                    detail = _safe_http_error_detail(exc)
+                    if detail:
+                        # Preserve HTTPError type so fallback routing and callers
+                        # keep their existing semantics while showing root cause.
+                        raise error.HTTPError(
+                            exc.url, exc.code,
+                            f"{exc.reason}; upstream: {detail}",
+                            exc.headers, None,
+                        ) from exc
                     raise
                 self._sleep_before_retry(attempt)
             except (error.URLError, TimeoutError):
