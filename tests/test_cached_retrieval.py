@@ -149,7 +149,7 @@ def test_cached_reports_strict_date_policy_excludes_uncertified_reports(tmp_path
         local_retriever=InMemoryRetriever(hits=[], reports=[]),
         report_store=_dated_store(tmp_path),
         as_of_date="2026-10-05",
-        temporal_policy="require_verified",
+        temporal_policy="require_date_clear_input",
     )
     selected = retriever.community_reports("radiation safety", top_k=10)
     assert [r.id for r in selected] == ["current"]
@@ -164,7 +164,7 @@ def test_cached_reports_default_keeps_historical_behavior(tmp_path: Path) -> Non
     assert {r.id for r in selected} == {"current", "future", "undated"}
 
 
-@pytest.mark.parametrize("policy", ["exclude_future", "require_verified"])
+@pytest.mark.parametrize("policy", ["exclude_future", "require_date_clear_input"])
 def test_temporal_policy_requires_date(policy: str, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="as_of_date"):
         CachedCommunityReportRetriever(
