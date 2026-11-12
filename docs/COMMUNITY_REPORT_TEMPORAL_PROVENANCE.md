@@ -104,3 +104,32 @@ source provenance. Match snapshot, dump and community IDs before interpreting
 results, and eventually persist report source dates in Neo4j itself. This
 allowlist enables controlled, explicitly limited experiments while that
 metadata migration is pending.
+
+
+## Avoiding irrelevant priming after temporal filtering
+
+If the 2026-10-05 source audit excludes all legal communities,
+the only remaining eligible reports may discuss GraphRAG itself.
+Unrelated report summaries should not be used as legal DRIFT primers
+solely because they have a nonzero global rank.
+
+The Neo4j report retriever supports an **opt-in** minimum count of
+normalized query terms present in the report summary or community title:
+
+```bash
+export GRAPHRAG_MIN_COMMUNITY_TERM_OVERLAP=1
+```
+
+A threshold of `1` rejects reports with no lexical overlap. If no
+Community Report remains, the DRIFT workflow uses its existing local
+search fallback; it must not invent report-derived legal evidence.
+
+The threshold is recorded in the immutable comparison identity and
+LangGraph fingerprint; changing it requires a separate run ID.
+The default is `0` for backward compatibility with previously
+published benchmark conditions.
+
+**Limitation:** lexical matching is not semantic retrieval. Tokenization
+may miss paraphrases or Korean compounds; this option is a conservative
+noise gate, not a relevance/correctness guarantee. Prefer evaluating
+relevance and source-coverage changes separately.
