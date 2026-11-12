@@ -21,10 +21,10 @@ class CachedCommunityReportRetriever:
     local_retriever: Retriever
     report_store: FileCommunityReportStore
     as_of_date: str | None = None
-    temporal_policy: Literal["none", "exclude_future", "require_verified"] = "none"
+    temporal_policy: Literal["none", "exclude_future", "require_date_clear_input"] = "none"
 
     def __post_init__(self) -> None:
-        if self.temporal_policy not in {"none", "exclude_future", "require_verified"}:
+        if self.temporal_policy not in {"none", "exclude_future", "require_date_clear_input"}:
             raise ValueError("Unknown Community Report temporal policy")
         if self.temporal_policy != "none" and not self.as_of_date:
             raise ValueError("Temporal Community Report policy requires as_of_date")
@@ -39,7 +39,7 @@ class CachedCommunityReportRetriever:
         )
         if evaluation["status"] == "future_versions_in_report_input":
             return False
-        if self.temporal_policy == "require_verified":
+        if self.temporal_policy == "require_date_clear_input":
             return (
                 evaluation["status"] == "no_future_article_detected_in_report_input"
                 and evaluation["uncertain_source_count"] == 0
