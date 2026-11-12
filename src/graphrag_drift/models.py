@@ -15,6 +15,9 @@ class CommunityReport:
     id: str
     summary: str
     score: float = 1.0
+    # Optional input-context lineage for cached/generated reports. This is not
+    # proof that each sentence of the summary is supported by those sources.
+    source_provenance: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
