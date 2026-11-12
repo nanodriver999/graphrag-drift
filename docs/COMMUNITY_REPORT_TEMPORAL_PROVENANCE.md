@@ -77,3 +77,30 @@ default Neo4j-backed `COMMUNITY_REPORT_QUERY` still needs report-level source
 metadata to support equivalent query-time filtering. An existing snapshot
 cannot be retroactively declared legally current merely because a separate
 cache was audited.
+
+
+## Optional Neo4j Community Report allowlist
+
+The Neo4j-backed report query now accepts a configurable, explicit
+`allowed_community_ids` list. If the caller sets the environment variable
+`GRAPHRAG_ALLOWED_COMMUNITY_IDS` when running
+`scripts/run_drift_profile_comparison.py`, that list is passed to Neo4j:
+
+```bash
+# Generated from a prior source-date audit. Do NOT treat these IDs as
+# legally verified just because their evidence had no future dates.
+export GRAPHRAG_ALLOWED_COMMUNITY_IDS="community-search,leiden-1"
+```
+
+The configured IDs and corresponding selection are included in the strict
+benchmark identity and LangGraph checkpoint fingerprint. **An unset variable**
+retains the old unrestricted Community Report query. An **empty string** sets
+an explicit empty list, preventing any Community Report from being returned;
+DRIFT can fall back to local retrieval where supported.
+
+Filtering by the IDs in a *cached input-source audit* does not prove those
+same report IDs in a restored Neo4j snapshot have identical summaries or
+source provenance. Match snapshot, dump and community IDs before interpreting
+results, and eventually persist report source dates in Neo4j itself. This
+allowlist enables controlled, explicitly limited experiments while that
+metadata migration is pending.
