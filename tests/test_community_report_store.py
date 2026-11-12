@@ -67,3 +67,36 @@ def test_file_community_report_store_rejects_missing_report_body(tmp_path: Path)
 
     with pytest.raises(ValueError, match="report body"):
         store.load()
+
+
+
+def test_store_preserves_date_provenance_if_present(tmp_path: Path) -> None:
+    report_rel = "community_reports/abc123/community-leiden-4.json"
+    manifest_rel = "community_reports/abc123/manifest.json"
+    provenance = {
+        "format": "graphrag-drift-community-source-provenance-v1",
+        "source_article_versions": [{
+            "article_key": "kr:law:011435:mst:1:effective:20270220:art:53-3",
+            "effective_date": "20270220",
+            "law_id": "011435",
+            "article": "53-3",
+        }],
+        "source_chunk_count": 1,
+        "undated_or_unversioned_chunk_count": 0,
+        "entity_description_count": 0,
+        "other_evidence_count": 0,
+    }
+    _write_json(tmp_path / report_rel, {
+        "community_id": "leiden-4",
+        "report": {
+            "title": "Duties", "summary": "Duties overview", "key_findings": [],
+        },
+        "source_provenance": provenance,
+    })
+    _write_json(tmp_path / manifest_rel, {
+        "reports": [{"community_id": "leiden-4", "file": report_rel}],
+    })
+    result = FileCommunityReportStore.from_relative_manifest(
+        tmp_path, manifest_rel,
+    ).load()
+    assert result[0].source_provenance == provenance
