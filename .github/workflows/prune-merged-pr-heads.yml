@@ -1,0 +1,132 @@
+name: Prune branches from merged pull requests
+
+# One-time invocation on introduction of this workflow to main.
+# Future deletion requires an explicit manual dispatch or editing this file.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/prune-merged-pr-heads.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Verify merged PR and unchanged branch HEAD, then delete
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            if (context.ref !== 'refs/heads/main') {
+              core.setFailed('Cleanup must execute from main');
+              return;
+            }
+            const fullName = owner + '/' + repo;
+            const [branches, prs] = await Promise.all([
+              github.paginate(github.rest.repos.listBranches, {
+                owner, repo, per_page: 100
+              }),
+              github.paginate(github.rest.pulls.list, {
+                owner, repo, state: 'all', per_page: 100
+              })
+            ]);
+
+            const openHeads = new Set(prs
+              .filter(pr => pr.state === 'open' &&
+                pr.head?.repo?.full_name === fullName)
+              .map(pr => pr.head.ref));
+
+            const mergedHeads = new Map();
+            const conflictedHeads = new Set();
+            for (const pr of prs) {
+              if (!pr.merged_at ||
+                  pr.head?.repo?.full_name !== fullName ||
+                  pr.base?.repo?.full_name !== fullName) continue;
+              const name = pr.head.ref;
+              const previous = mergedHeads.get(name);
+              if (previous && previous.sha !== pr.head.sha) {
+                conflictedHeads.add(name);
+              } else {
+                mergedHeads.set(name, {
+                  sha: pr.head.sha,
+                  pr: pr.number,
+                });
+              }
+            }
+
+            let deleted = 0;
+            let protectedOrMain = 0;
+            let retainedOpen = 0;
+            let retainedNonMerged = 0;
+            let retainedChanged = 0;
+            let errors = 0;
+            for (const branch of branches) {
+              const name = branch.name;
+              if (name === 'main' || branch.protected) {
+                protectedOrMain++;
+                continue;
+              }
+              if (openHeads.has(name)) {
+                retainedOpen++;
+                core.info('Keeping open PR branch ' + name);
+                continue;
+              }
+              const merged = mergedHeads.get(name);
+              if (!merged || conflictedHeads.has(name)) {
+                retainedNonMerged++;
+                core.info('Keeping non-merged/untracked branch ' + name);
+                continue;
+              }
+              if (branch.commit.sha !== merged.sha) {
+                retainedChanged++;
+                core.warning('Keeping changed head ' + name +
+                  ': branch HEAD differs from merged PR #' + merged.pr);
+                continue;
+              }
+
+              try {
+                // Revalidate against the live ref immediately before deletion.
+                const latest = await github.rest.git.getRef({
+                  owner, repo, ref: 'heads/' + name
+                });
+                if (latest.data.object.sha !== merged.sha) {
+                  retainedChanged++;
+                  core.warning('Skipping concurrently updated branch ' + name);
+                  continue;
+                }
+                await github.rest.git.deleteRef({
+                  owner, repo, ref: 'heads/' + name
+                });
+                deleted++;
+                core.info('Deleted ' + name + ' from merged PR #' + merged.pr);
+              } catch (error) {
+                errors++;
+                core.warning('Failed to delete ' + name + ': ' + error.message);
+              }
+            }
+
+            core.info('Deleted ' + deleted + ' unchanged merged PR branches');
+            await core.summary
+              .addHeading('Merged PR branch cleanup')
+              .addTable([
+                [{data: 'Classification', header: true},
+                 {data: 'Branches', header: true}],
+                ['Deleted (merged PR + same head)', String(deleted)],
+                ['Preserved open PRs', String(retainedOpen)],
+                ['Preserved nonmerged/untracked', String(retainedNonMerged)],
+                ['Preserved changed HEADs', String(retainedChanged)],
+                ['Preserved main/protected', String(protectedOrMain)],
+                ['Deletion errors', String(errors)]
+              ])
+              .addRaw('No unmerged branch, changed head, main branch, or ' +
+                'protected branch was intentionally deleted.')
+              .write();
+            if (errors) {
+              core.setFailed(errors + ' branch deletion(s) failed; inspect logs');
+            }
