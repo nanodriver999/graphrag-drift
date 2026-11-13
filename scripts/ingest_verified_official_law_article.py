@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,13 +15,20 @@ from graphrag_drift.verified_official_ingestion import (
 )
 
 
-def _load_base_snapshot(path: Path) -> dict:
+def _load_base_snapshot(path: Path, dump_path: Path | None = None) -> dict:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("format") != "graphrag-drift-neo4j-snapshot-v1":
         raise ValueError("Expected the original community-ready snapshot manifest")
     digest = payload.get("snapshot", {}).get("sha256")
     if not isinstance(digest, str) or len(digest) != 64:
         raise ValueError("Snapshot manifest has no SHA-256 identity")
+    if dump_path is not None:
+        hasher = hashlib.sha256()
+        with dump_path.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        if hasher.hexdigest() != digest:
+            raise ValueError("Original snapshot dump SHA-256 mismatch")
     return {
         "base_snapshot_sha256": digest,
         "base_snapshot_stage": payload.get("stage"),
@@ -48,6 +56,10 @@ def main() -> None:
     parser.add_argument("--packet-json", required=True)
     parser.add_argument("--source-xml", required=True)
     parser.add_argument("--base-snapshot-manifest", required=True)
+    parser.add_argument(
+        "--base-snapshot-dump",
+        help="Original dump whose SHA-256 must match the base manifest for --apply",
+    )
     parser.add_argument("--output-json", required=True)
     parser.add_argument(
         "--apply", action="store_true",
@@ -58,8 +70,13 @@ def main() -> None:
         help="Explicitly acknowledge target is a disposable restored copy",
     )
     args = parser.parse_args()
+    if args.apply and not args.base_snapshot_dump:
+        parser.error("--apply requires --base-snapshot-dump for SHA-256 verification")
     props = load_and_build_verified_chunk(args.packet_json, args.source_xml)
-    parent = _load_base_snapshot(Path(args.base_snapshot_manifest))
+    parent = _load_base_snapshot(
+        Path(args.base_snapshot_manifest),
+        Path(args.base_snapshot_dump) if args.base_snapshot_dump else None,
+    )
     report = {
         "format": "graphrag-drift-verified-law-overlay-v1",
         **parent,
