@@ -203,3 +203,22 @@ def test_snapshot_manifest_must_preserve_original_sha256(tmp_path: Path) -> None
     row = _load_base_snapshot(manifest)
     assert row["base_snapshot_sha256"] == "a" * 64
     assert row["base_snapshot_stage"] == "community-ready"
+
+
+
+def test_snapshot_bytes_must_match_parent_manifest_before_apply(tmp_path: Path) -> None:
+    import hashlib
+
+    dump = tmp_path / "neo4j.dump"
+    dump.write_bytes(b"expected local source dump")
+    good_sha = hashlib.sha256(dump.read_bytes()).hexdigest()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "format": "graphrag-drift-neo4j-snapshot-v1",
+        "stage": "community-ready",
+        "snapshot": {"sha256": good_sha},
+    }))
+    assert _load_base_snapshot(manifest, dump)["base_snapshot_sha256"] == good_sha
+    dump.write_bytes(b"corrupted dump")
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        _load_base_snapshot(manifest, dump)
