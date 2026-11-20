@@ -127,12 +127,13 @@ def parse_official_article_xml(
     }
 
 
-def fetch_official_article(
+def fetch_official_article_with_xml(
     request_info: OfficialLawArticleRequest,
     *,
     oc: str,
     timeout_seconds: float = 30.0,
-) -> dict:
+) -> tuple[dict, bytes]:
+    """Return the validated packet AND its original bytes for later verification."""
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     url = request_info.api_url(oc=oc)
@@ -142,4 +143,16 @@ def fetch_official_article(
         raw = response.read(4 * 1024 * 1024 + 1)
     if len(raw) > 4 * 1024 * 1024:
         raise ValueError("Official law response unexpectedly exceeds 4 MiB")
-    return parse_official_article_xml(raw, request_info)
+    return parse_official_article_xml(raw, request_info), raw
+
+
+def fetch_official_article(
+    request_info: OfficialLawArticleRequest,
+    *,
+    oc: str,
+    timeout_seconds: float = 30.0,
+) -> dict:
+    packet, _raw = fetch_official_article_with_xml(
+        request_info, oc=oc, timeout_seconds=timeout_seconds
+    )
+    return packet

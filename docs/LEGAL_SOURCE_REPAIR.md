@@ -31,14 +31,16 @@ python scripts/fetch_official_effective_law_article.py \
   --article 53-3 \
   --effective-date 2026-05-19 \
   --as-of-date 2026-10-05 \
-  --output-json /tmp/kr-law-011435-53-3-20260519.json
+  --output-json /tmp/kr-law-011435-53-3-20260519.json \
+  --output-xml /tmp/kr-law-011435-53-3-20260519.xml
 ```
 
 The collector requests `target=eflaw&type=XML&MST=286119&efYd=20260519&JO=005303`,
 validates the law ID, version effective date, exact article number and
-article-specific effective date, and exports a JSON source packet with
-an original-XML SHA-256. The `OC` value is never included in the
-output JSON.
+article-specific effective date, and exports both the **original XML** and
+a JSON source packet with its SHA-256. The `OC` value is never included
+in either output. The separate XML must be retained for an independent
+integrity check before any graph ingestion.
 
 **The collector has no Neo4j write permissions or snapshot mutation.**
 Its output contains `ingestion_status: downloaded_not_imported`.
@@ -71,3 +73,78 @@ After the authenticated source download succeeds:
 The collection step is deliberately separate from ingestion to avoid
 silently introducing unverified content or mislabelled future law into
 the graph.
+
+
+## 3. Stage an official `Chunk` overlay (dry run, no graph mutation)
+
+A verified official article can now be mapped to the same versioned
+Neo4j `Chunk` fields as the historical logical dump, using the *original*
+XML bytes to independently validate every source JSON field.
+
+```bash
+python scripts/ingest_verified_official_law_article.py \
+  --packet-json /tmp/kr-law-011435-53-3-20260519.json \
+  --source-xml /tmp/kr-law-011435-53-3-20260519.xml \
+  --base-snapshot-manifest data-repo/snapshots/community-ready/manifest.json \
+  --base-snapshot-dump data-repo/snapshots/community-ready/neo4j.dump \
+  --output-json /tmp/official-law-overlay-plan.json
+```
+
+This only produces a staging plan. It does **not** change the source dump,
+the restored Neo4j database, or Community Reports.
+
+If and only if a *separate, disposable* Neo4j instance has already been
+restored from that original community-ready dump:
+
+```bash
+export LOCAL_NEO4J_URI=bolt://127.0.0.1:17687
+export LOCAL_NEO4J_USERNAME=neo4j
+export LOCAL_NEO4J_PASSWORD="<password>"
+export LOCAL_NEO4J_DATABASE=neo4j
+
+python scripts/ingest_verified_official_law_article.py \
+  --packet-json /tmp/kr-law-011435-53-3-20260519.json \
+  --source-xml /tmp/kr-law-011435-53-3-20260519.xml \
+  --base-snapshot-manifest data-repo/snapshots/community-ready/manifest.json \
+  --base-snapshot-dump data-repo/snapshots/community-ready/neo4j.dump \
+  --output-json /tmp/derived-law-overlay-result.json \
+  --apply --confirm-disposable-restore
+```
+
+The importer refuses remote Neo4j endpoints, requires a matching parent
+dump SHA-256 and matching XML/JSON, and performs a single Neo4j write
+transaction. Exact re-imports are idempotent; if any existing
+`Chunk.articleKey` conflicts, the import fails instead of overwriting
+evidence. The new `Chunk` is immediately eligible for local lexical
+retrieval when the existing chunk full-text index is rebuilt.
+
+**Source integrity limitation:** matching XML and JSON verifies internal
+consistency and that the packet is the same one obtained by the
+authenticated collector. It is not a digital signature by the legal
+publisher. Protect the provenance files and record their digests.
+
+**Data limitation:** adding only Article 53-3 into a derived Neo4j copy
+does **not** repair the whole 2026-effective `원자력안전법`, rebuild the
+community memberships, or make mixed-date Community Reports correct.
+Do not use an article-only patched copy as a finalized production source.
+
+## 4. Rebuild and validate a *new* snapshot
+
+After imported text and legal scope are checked, rebuild graph indexes,
+relationships/community clustering, and date-specific Community Reports
+from the derived source; export a fresh `neo4j.dump` with a **new
+manifest and SHA-256**. Never replace the historical
+`snapshots/community-ready/neo4j.dump` in place.
+
+Run on the **derived** database:
+
+```bash
+python scripts/check_aura_temporal_coverage.py \
+  --as-of 2026-10-05 --law-id 011435 \
+  --article 011435:53-3 --require-current
+```
+
+The first step of this workflow is implemented and covered by offline
+tests. Full derived-dump rebuilding and new Community Report generation
+must be completed separately before claiming a scientifically controlled
+A/B search-policy result.

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from graphrag_drift.official_law_api import (
     OfficialLawArticleRequest,
-    fetch_official_article,
+    fetch_official_article_with_xml,
 )
 
 
@@ -24,6 +24,8 @@ def main() -> None:
     parser.add_argument("--effective-date", required=True)
     parser.add_argument("--as-of-date", required=True)
     parser.add_argument("--output-json", required=True)
+    parser.add_argument("--output-xml", required=True,
+                        help="Save original official XML for integrity verification on import")
     args = parser.parse_args()
 
     oc = os.getenv("LAW_GO_KR_OC")
@@ -36,7 +38,12 @@ def main() -> None:
         effective_date=args.effective_date,
         as_of_date=args.as_of_date,
     )
-    result = fetch_official_article(request, oc=oc)
+    result, raw_xml = fetch_official_article_with_xml(request, oc=oc)
+    xml_path = Path(args.output_xml)
+    xml_path.parent.mkdir(parents=True, exist_ok=True)
+    if xml_path.resolve() == Path(args.output_json).resolve():
+        parser.error("--output-json and --output-xml must be different paths")
+    xml_path.write_bytes(raw_xml)
     path = Path(args.output_json)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
