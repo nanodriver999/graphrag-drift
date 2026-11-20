@@ -1,49 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from neo4j import GraphDatabase
 
 from graphrag_drift.verified_official_ingestion import (
     import_verified_official_chunk,
     load_and_build_verified_chunk,
+    load_base_snapshot,
+    validate_local_derived_target,
 )
-
-
-def _load_base_snapshot(path: Path, dump_path: Path | None = None) -> dict:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("format") != "graphrag-drift-neo4j-snapshot-v1":
-        raise ValueError("Expected the original community-ready snapshot manifest")
-    digest = payload.get("snapshot", {}).get("sha256")
-    if not isinstance(digest, str) or len(digest) != 64:
-        raise ValueError("Snapshot manifest has no SHA-256 identity")
-    if dump_path is not None:
-        hasher = hashlib.sha256()
-        with dump_path.open("rb") as file:
-            for chunk in iter(lambda: file.read(1024 * 1024), b""):
-                hasher.update(chunk)
-        if hasher.hexdigest() != digest:
-            raise ValueError("Original snapshot dump SHA-256 mismatch")
-    return {
-        "base_snapshot_sha256": digest,
-        "base_snapshot_stage": payload.get("stage"),
-    }
-
-
-def _validate_local_derived_target(uri: str) -> None:
-    parsed = urlsplit(uri)
-    if parsed.scheme not in {"bolt", "neo4j"} or parsed.hostname not in {
-        "localhost", "127.0.0.1", "::1",
-    }:
-        raise ValueError(
-            "Write is permitted only to a locally restored disposable "
-            "Neo4j instance; never target Aura or a remote production DB"
-        )
 
 
 def main() -> None:
@@ -73,7 +42,7 @@ def main() -> None:
     if args.apply and not args.base_snapshot_dump:
         parser.error("--apply requires --base-snapshot-dump for SHA-256 verification")
     props = load_and_build_verified_chunk(args.packet_json, args.source_xml)
-    parent = _load_base_snapshot(
+    parent = load_base_snapshot(
         Path(args.base_snapshot_manifest),
         Path(args.base_snapshot_dump) if args.base_snapshot_dump else None,
     )
@@ -95,7 +64,7 @@ def main() -> None:
                 "restore the existing dump into a separate local Neo4j first"
             )
         uri = os.getenv("LOCAL_NEO4J_URI", "bolt://localhost:17687")
-        _validate_local_derived_target(uri)
+        validate_local_derived_target(uri)
         user = os.getenv("LOCAL_NEO4J_USERNAME", "neo4j")
         password = os.getenv("LOCAL_NEO4J_PASSWORD")
         database = os.getenv("LOCAL_NEO4J_DATABASE", "neo4j")
