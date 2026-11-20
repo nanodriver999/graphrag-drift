@@ -1,6 +1,6 @@
 name: Prune branches from merged pull requests
 
-# One-time invocation on introduction of this workflow to main.
+# One-time invocation on introduction and after PR #82 merged (2026-11-20).
 # Future deletion requires an explicit manual dispatch or editing this file.
 on:
   push:
