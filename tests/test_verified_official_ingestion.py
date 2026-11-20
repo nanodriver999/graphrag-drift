@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -16,10 +15,8 @@ from graphrag_drift.verified_official_ingestion import (
     build_verified_official_chunk,
     import_verified_official_chunk,
     load_and_build_verified_chunk,
-)
-from scripts.ingest_verified_official_law_article import (
-    _load_base_snapshot,
-    _validate_local_derived_target,
+    load_base_snapshot,
+    validate_local_derived_target,
 )
 
 
@@ -189,8 +186,8 @@ def test_undated_or_remote_write_target_rejected() -> None:
         "https://www.law.go.kr",
     ):
         with pytest.raises(ValueError, match="locally restored"):
-            _validate_local_derived_target(target)
-    _validate_local_derived_target("bolt://127.0.0.1:17687")
+            validate_local_derived_target(target)
+    validate_local_derived_target("bolt://127.0.0.1:17687")
 
 
 def test_snapshot_manifest_must_preserve_original_sha256(tmp_path: Path) -> None:
@@ -200,7 +197,7 @@ def test_snapshot_manifest_must_preserve_original_sha256(tmp_path: Path) -> None
         "stage": "community-ready",
         "snapshot": {"sha256": "a" * 64},
     }))
-    row = _load_base_snapshot(manifest)
+    row = load_base_snapshot(manifest)
     assert row["base_snapshot_sha256"] == "a" * 64
     assert row["base_snapshot_stage"] == "community-ready"
 
@@ -218,7 +215,7 @@ def test_snapshot_bytes_must_match_parent_manifest_before_apply(tmp_path: Path) 
         "stage": "community-ready",
         "snapshot": {"sha256": good_sha},
     }))
-    assert _load_base_snapshot(manifest, dump)["base_snapshot_sha256"] == good_sha
+    assert load_base_snapshot(manifest, dump)["base_snapshot_sha256"] == good_sha
     dump.write_bytes(b"corrupted dump")
     with pytest.raises(ValueError, match="SHA-256 mismatch"):
-        _load_base_snapshot(manifest, dump)
+        load_base_snapshot(manifest, dump)
