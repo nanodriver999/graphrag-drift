@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlsplit
+import hashlib
 from typing import Any
 import json
-import re
 
 from .official_law_api import (
     OfficialLawArticleRequest,
@@ -156,3 +157,37 @@ def load_and_build_verified_chunk(
         raise ValueError("Source XML must not exceed 4 MiB")
     packet = json.loads(Path(packet_path).read_text(encoding="utf-8"))
     return build_verified_official_chunk(packet, raw)
+
+
+
+def load_base_snapshot(path: Path, dump_path: Path | None = None) -> dict:
+    """Load a pinned snapshot identity; verify its dump bytes before writes."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("format") != "graphrag-drift-neo4j-snapshot-v1":
+        raise ValueError("Expected the original community-ready snapshot manifest")
+    digest = payload.get("snapshot", {}).get("sha256")
+    if not isinstance(digest, str) or len(digest) != 64:
+        raise ValueError("Snapshot manifest has no SHA-256 identity")
+    if dump_path is not None:
+        hasher = hashlib.sha256()
+        with dump_path.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        if hasher.hexdigest() != digest:
+            raise ValueError("Original snapshot dump SHA-256 mismatch")
+    return {
+        "base_snapshot_sha256": digest,
+        "base_snapshot_stage": payload.get("stage"),
+    }
+
+
+def validate_local_derived_target(uri: str) -> None:
+    """Refuse Aura and remote production Neo4j write targets."""
+    parsed = urlsplit(uri)
+    if parsed.scheme not in {"bolt", "neo4j"} or parsed.hostname not in {
+        "localhost", "127.0.0.1", "::1",
+    }:
+        raise ValueError(
+            "Write is permitted only to a locally restored disposable "
+            "Neo4j instance; never target Aura or a remote production DB"
+        )
