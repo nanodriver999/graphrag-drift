@@ -80,8 +80,11 @@ def parse_official_law_corpus(raw: bytes, request: OfficialLawVersionRequest) ->
         raise ValueError("Official law XML is empty or exceeds the 4 MiB limit")
     root = ET.fromstring(raw)
     raw_id = _find_text(root, "법령ID")
+    returned_mst = _find_text(root, "법령일련번호")
     effective = _find_text(root, "시행일자")
     law_name = _find_text(root, "법령명_한글") or _find_text(root, "법령명한글")
+    if returned_mst and (not returned_mst.isdigit() or int(returned_mst) != int(request.mst)):
+        raise ValueError("Official returned MST differs from requested law version")
     if not raw_id.isdigit() or int(raw_id) != int(request.law_id):
         raise ValueError("Official law ID is absent or does not match request")
     if effective != normalize_date(request.effective_date):
