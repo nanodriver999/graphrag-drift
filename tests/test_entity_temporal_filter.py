@@ -57,3 +57,33 @@ def test_entity_query_preserves_undated_legacy_chunks() -> None:
     # sources by this query and must be audited separately.
     for query in (ENTITY_HYBRID_QUERY, ENTITY_VECTOR_QUERY):
         assert "coalesce(chunk.officialEffectiveDate, '') = ''" in query
+
+
+
+@pytest.mark.parametrize("hybrid", [True, False])
+def test_strict_legal_mode_masks_unverified_entity_description(hybrid: bool) -> None:
+    driver = CapturingDriver()
+    retriever = Neo4jGraphRAGRetriever(
+        driver=driver,
+        database="neo4j",
+        use_hybrid=hybrid,
+        as_of_date="2026-10-05",
+        strip_unverified_entity_descriptions=True,
+    )
+    retriever._search_entities("방사선안전관리자", vector=[0.1], candidate_k=3)
+    query, params, _ = driver.calls[0]
+    assert params["strip_unverified_entity_descriptions"] is True
+    assert (
+        "CASE WHEN $strip_unverified_entity_descriptions THEN '' "
+        "ELSE coalesce(node.description, '') END"
+    ) in query
+    # Retain existing date-filtered direct Chunk evidence, not text synthesized
+    # in unversioned entity.description.
+    assert "chunk.officialEffectiveDate <= $as_of_date" in query
+
+
+def test_default_legal_mode_preserves_legacy_entity_description_behavior() -> None:
+    driver = CapturingDriver()
+    retriever = Neo4jGraphRAGRetriever(driver=driver)
+    retriever._search_entities("safety", vector=[0.1], candidate_k=3)
+    assert driver.calls[0][1]["strip_unverified_entity_descriptions"] is False
