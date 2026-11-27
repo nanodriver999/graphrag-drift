@@ -48,7 +48,7 @@ WITH node, score, neighbors, rel_types,
 RETURN 'entity:' + coalesce(node.id, elementId(node)) AS id,
        trim(
          coalesce(node.name, '') + ' | ' +
-         coalesce(node.description, '') +
+         CASE WHEN $strip_unverified_entity_descriptions THEN '' ELSE coalesce(node.description, '') END +
          CASE WHEN size(neighbors) > 0 THEN ' | neighbors: ' + reduce(s = '', x IN neighbors | s + CASE WHEN s = '' THEN '' ELSE ', ' END + coalesce(toString(x), '')) ELSE '' END +
          CASE WHEN size(rel_types) > 0 THEN ' | relationships: ' + reduce(s = '', x IN rel_types | s + CASE WHEN s = '' THEN '' ELSE ', ' END + x) ELSE '' END +
          CASE WHEN size(chunks) > 0 THEN ' | chunks: ' + reduce(s = '', x IN chunks | s + CASE WHEN s = '' THEN '' ELSE ' || ' END + coalesce(toString(x), '')) ELSE '' END
@@ -71,7 +71,7 @@ WITH node, score, neighbors, rel_types,
 RETURN 'entity:' + coalesce(node.id, elementId(node)) AS id,
        trim(
          coalesce(node.name, '') + ' | ' +
-         coalesce(node.description, '') +
+         CASE WHEN $strip_unverified_entity_descriptions THEN '' ELSE coalesce(node.description, '') END +
          CASE WHEN size(neighbors) > 0 THEN ' | neighbors: ' + reduce(s = '', x IN neighbors | s + CASE WHEN s = '' THEN '' ELSE ', ' END + coalesce(toString(x), '')) ELSE '' END +
          CASE WHEN size(rel_types) > 0 THEN ' | relationships: ' + reduce(s = '', x IN rel_types | s + CASE WHEN s = '' THEN '' ELSE ', ' END + x) ELSE '' END +
          CASE WHEN size(chunks) > 0 THEN ' | chunks: ' + reduce(s = '', x IN chunks | s + CASE WHEN s = '' THEN '' ELSE ' || ' END + coalesce(toString(x), '')) ELSE '' END
@@ -205,6 +205,7 @@ class Neo4jGraphRAGRetriever:
     # None: existing unrestricted behavior; empty tuple: allow no community reports.
     allowed_community_ids: tuple[str, ...] | None = None
     min_community_term_overlap: int = 0
+    strip_unverified_entity_descriptions: bool = False
 
     @classmethod
     def from_settings(
@@ -216,6 +217,7 @@ class Neo4jGraphRAGRetriever:
         as_of_date: str | None = None,
         allowed_community_ids: tuple[str, ...] | None = None,
         min_community_term_overlap: int = 0,
+        strip_unverified_entity_descriptions: bool = False,
     ) -> "Neo4jGraphRAGRetriever":
         driver = GraphDatabase.driver(
             settings.uri,
@@ -230,6 +232,7 @@ class Neo4jGraphRAGRetriever:
             as_of_date=_normalize_as_of_date(as_of_date),
             allowed_community_ids=allowed_community_ids,
             min_community_term_overlap=min_community_term_overlap,
+            strip_unverified_entity_descriptions=strip_unverified_entity_descriptions,
         )
 
     def close(self) -> None:
@@ -248,6 +251,7 @@ class Neo4jGraphRAGRetriever:
             "query_vector": vector,
             "candidate_k": candidate_k,
             "as_of_date": _normalize_as_of_date(self.as_of_date),
+            "strip_unverified_entity_descriptions": self.strip_unverified_entity_descriptions,
         }
         if self.use_hybrid:
             params["fulltext_index"] = ENTITY_FULLTEXT_INDEX
