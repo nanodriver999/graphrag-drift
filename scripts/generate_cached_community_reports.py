@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 
 from graphrag_drift.community_report_generation import CommunityReportCacheBuilder
 from graphrag_drift.openai_compatible import OpenAICompatibleTextGenerator
@@ -13,6 +14,8 @@ def main() -> None:
         description="Generate or reuse versioned Community Report cache files."
     )
     parser.add_argument("--data-repo", default=".")
+    parser.add_argument("--checkpoint-dir", default=None,
+                        help="Persist completed part summaries for restart/resume")
     parser.add_argument(
         "--generator-name",
         default=os.getenv(
@@ -39,6 +42,8 @@ def main() -> None:
     result = CommunityReportCacheBuilder(
         generator=generator,
         generator_name=args.generator_name,
+        checkpoint_root=(Path(args.checkpoint_dir) if args.checkpoint_dir
+                         else Path(args.data_repo) / ".community_report_checkpoints"),
     ).build(args.data_repo)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
