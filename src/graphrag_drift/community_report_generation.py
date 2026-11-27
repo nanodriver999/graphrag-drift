@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -70,11 +71,46 @@ def _validate_report(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+PART_CHECKPOINT_FORMAT = "graphrag-drift-community-part-checkpoint-v1"
+PART_PROMPT_VERSION = "2026-11-27-part-summary-v1"
+
+
+def _validate_part_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    summary = payload.get("summary")
+    points = payload.get("key_points", [])
+    entities = payload.get("entities", [])
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("Part summary is missing summary")
+    if not isinstance(points, list) or any(not isinstance(x, str) for x in points):
+        raise ValueError("Part summary key_points must be strings")
+    if not isinstance(entities, list) or any(not isinstance(x, str) for x in entities):
+        raise ValueError("Part summary entities must be strings")
+    return {
+        "summary": summary.strip(),
+        "key_points": [x.strip() for x in points if x.strip()],
+        "entities": [x.strip() for x in entities if x.strip()],
+    }
+
+
+def _atomic_checkpoint_json(path: Path, payload: dict[str, Any]) -> None:
+    """Never leave a truncated checkpoint after a killed model request."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temp, path)
+
+
+
 @dataclass
 class CommunityReportCacheBuilder:
     generator: TextGenerator
     generator_name: str = "openai-compatible"
     max_part_chars: int = 60000
+    checkpoint_root: str | Path | None = None
 
     def _summarize_part(self, community_id: str, part: dict[str, Any]) -> dict[str, Any]:
         serialized = json.dumps(part, ensure_ascii=False, separators=(",", ":"))
@@ -90,20 +126,63 @@ class CommunityReportCacheBuilder:
             f"Community: {community_id}\nEvidence:\n{serialized}"
         )
         payload = _parse_json_object(self.generator.generate(prompt))
-        summary = payload.get("summary")
-        points = payload.get("key_points", [])
-        entities = payload.get("entities", [])
-        if not isinstance(summary, str):
-            raise ValueError("Part summary is missing summary")
-        if not isinstance(points, list) or any(not isinstance(item, str) for item in points):
-            raise ValueError("Part summary key_points must be strings")
-        if not isinstance(entities, list) or any(not isinstance(item, str) for item in entities):
-            raise ValueError("Part summary entities must be strings")
-        return {
-            "summary": summary.strip(),
-            "key_points": [item.strip() for item in points if item.strip()],
-            "entities": [item.strip() for item in entities if item.strip()],
+        return _validate_part_summary(payload)
+
+    def _summarize_cached_part(
+        self,
+        community_id: str,
+        part: dict[str, Any],
+        *,
+        part_index: int,
+        dump_sha: str,
+        context_sha: str,
+    ) -> tuple[dict[str, Any], bool]:
+        if self.checkpoint_root is None:
+            return self._summarize_part(community_id, part), False
+        # Full input and execution identity, not merely the community/index,
+        # so changed laws, context, model or prompt cannot reuse stale text.
+        identity = {
+            "community_id": community_id,
+            "part_index": part_index,
+            "dump_sha256": dump_sha,
+            "context_sha256": context_sha,
+            "generator": self.generator_name,
+            "prompt_version": PART_PROMPT_VERSION,
+            "max_part_chars": self.max_part_chars,
+            "part": part,
         }
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        community_directory = hashlib.sha256(
+            community_id.encode("utf-8")
+        ).hexdigest()[:16]
+        path = (
+            Path(self.checkpoint_root)
+            / dump_sha[:12]
+            / context_sha[:12]
+            / community_directory
+            / f"part-{part_index:04d}-{fingerprint[:16]}.json"
+        )
+        if path.exists():
+            cached = _load_json(path)
+            if cached.get("format") != PART_CHECKPOINT_FORMAT or (
+                cached.get("input_sha256") != fingerprint
+            ):
+                raise ValueError(f"Part checkpoint identity mismatch: {path}")
+            body = cached.get("summary")
+            if not isinstance(body, dict):
+                raise ValueError(f"Part checkpoint has no verified summary: {path}")
+            return _validate_part_summary(body), True
+        result = self._summarize_part(community_id, part)
+        _atomic_checkpoint_json(path, {
+            "format": PART_CHECKPOINT_FORMAT,
+            "input_sha256": fingerprint,
+            "summary": result,
+        })
+        return result, False
 
     def _generate_report(
         self,
@@ -142,6 +221,8 @@ class CommunityReportCacheBuilder:
         generated = 0
         reused = 0
         enriched = 0
+        part_checkpoints_written = 0
+        part_checkpoints_reused = 0
 
         for row in input_manifest.get("communities", []):
             community_id = str(row["community_id"])
@@ -181,10 +262,20 @@ class CommunityReportCacheBuilder:
                     )
                     continue
 
-            part_summaries = [
-                self._summarize_part(community_id, part)
-                for part in evidence_parts
-            ]
+            part_summaries = []
+            for part_index, part in enumerate(evidence_parts):
+                summary, restored = self._summarize_cached_part(
+                    community_id,
+                    part,
+                    part_index=part_index,
+                    dump_sha=dump_sha,
+                    context_sha=context_sha,
+                )
+                part_summaries.append(summary)
+                if restored:
+                    part_checkpoints_reused += 1
+                elif self.checkpoint_root is not None:
+                    part_checkpoints_written += 1
 
             report_body = self._generate_report(community_id, overview, part_summaries)
             payload = {
@@ -234,6 +325,8 @@ class CommunityReportCacheBuilder:
             "generated": generated,
             "reused": reused,
             "enriched": enriched,
+            "part_checkpoints_written": part_checkpoints_written,
+            "part_checkpoints_reused": part_checkpoints_reused,
             "manifest_path": str(output_dir / "manifest.json"),
         }
 
