@@ -133,3 +133,31 @@ published benchmark conditions.
 may miss paraphrases or Korean compounds; this option is a conservative
 noise gate, not a relevance/correctness guarantee. Prefer evaluating
 relevance and source-coverage changes separately.
+
+
+## Optional strict Entity description text gate
+
+The Neo4j Hybrid/Vector Entity retrieval paths can now suppress the free-text
+Entity.description when its legal source version cannot be verified. This
+addresses a separate risk from filtering future-dated Chunk nodes: an old
+Entity description can still summarize future law even if all attached Chunk
+references are date-filtered.
+
+For pinned strict DRIFT benchmarking, explicitly set:
+
+    export GRAPHRAG_STRIP_UNVERIFIED_ENTITY_DESCRIPTIONS=true
+
+The setting is included in the progress/cache benchmark identity so a run
+with unverified descriptions can never be resumed silently as a strict run.
+Default false preserves historical exploratory behavior.
+
+When enabled, query text retains Entity names, graph relationship labels,
+and date-filtered direct Chunk passages, but *does not return* unversioned
+Entity.description strings. The Entity embedding index may still have been
+built from the old description and influence *ranking*, so this gate by
+itself does NOT make the entire entity-retrieval path temporally safe.
+
+Remaining requirement (Issue #74): rebuild entity descriptions and Community
+Reports from a verified date-specific corpus, carry per-claim/source-version
+lineage, and rerun retrieval with a fresh embedding index. Direct dated
+article evidence remains the standard for assessing legal answer grounding.
