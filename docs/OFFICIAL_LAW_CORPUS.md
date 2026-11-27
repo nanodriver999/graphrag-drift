@@ -64,3 +64,43 @@ article packets and the exact file set. Tampering/missing/extra files fail.
   Neo4j copy, rebuild supported graph relationships and fulltext indexes,
   regenerate Leiden/Community Reports, and write a NEW snapshot SHA-256.
   A raw Chunk alone does not create MENTIONS or IN_COMMUNITY relationships.
+
+
+## Batch overlay into a disposable Neo4j restore (second development step)
+
+The new importer stages ALL eligible packets together. By default it only
+validates the corpus, reads the parent snapshot identity, and writes a plan:
+
+    python scripts/ingest_verified_official_law_corpus.py \
+      --corpus-dir /tmp/official-law-011435-286119-20261005 \
+      --base-snapshot-manifest data-repo/snapshots/community-ready/manifest.json \
+      --output-json /tmp/corpus-overlay-plan.json \
+      --require-article 53-3
+
+When and only when an independent Neo4j copy of the historic dump has already
+been restored, the caller may explicitly request an atomic write:
+
+    export LOCAL_NEO4J_URI=bolt://127.0.0.1:17687
+    export LOCAL_NEO4J_USERNAME=neo4j
+    export LOCAL_NEO4J_PASSWORD="<local-password>"
+    export LOCAL_NEO4J_DATABASE=neo4j
+
+    python scripts/ingest_verified_official_law_corpus.py \
+      --corpus-dir /tmp/official-law-011435-286119-20261005 \
+      --base-snapshot-manifest data-repo/snapshots/community-ready/manifest.json \
+      --base-snapshot-dump data-repo/snapshots/community-ready/neo4j.dump \
+      --output-json /tmp/corpus-overlay-applied.json \
+      --require-article 53-3 \
+      --apply --confirm-disposable-restore
+
+Safety properties:
+- Full corpus and original XML are verified *before opening Neo4j*.
+- Full SHA-256 match of the historic base dump is mandatory for --apply.
+- Remote/Aura URIs are rejected; credential for local disposable DB is required.
+- Every eligible article is written in ONE transaction. Any conflict rolls
+  back the entire batch; identical already-present articles are idempotent.
+- The output report always retains the original snapshot SHA and states that
+  a NEW derived snapshot and graph relationship/community rebuild are still
+  required. No historic artifacts are overwritten.
+
+Do not use an article-only overlay as a finalized Community Report source.
