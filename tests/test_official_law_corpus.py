@@ -121,15 +121,17 @@ def test_modified_artifacts_are_rejected(tmp_path: Path, version, tamper):
 
 
 def test_rejects_duplicate_and_invalid_article_number(version):
-    duplicate = XML.replace(
-        b"<조문번호>70</조문번호>", b"<조문번호>53</조문번호>"
+    duplicate = XML.decode("utf-8").replace(
+        "<조문번호>70</조문번호>", "<조문번호>53</조문번호>"
     ).replace(
-        b"<조문가지번호>0</조문가지번호>\n<조문시행일자>20270220",
-        b"<조문가지번호>3</조문가지번호>\n<조문시행일자>20270220",
-    )
+        "<조문가지번호>0</조문가지번호>\n<조문시행일자>20270220",
+        "<조문가지번호>3</조문가지번호>\n<조문시행일자>20270220",
+    ).encode("utf-8")
     with pytest.raises(ValueError, match="Duplicate"):
         parse_official_law_corpus(duplicate, version)
-    bad = XML.replace(b"<조문번호>53</조문번호>", b"<조문번호>XX</조문번호>")
+    bad = XML.decode("utf-8").replace(
+        "<조문번호>53</조문번호>", "<조문번호>XX</조문번호>"
+    ).encode("utf-8")
     with pytest.raises(ValueError, match="invalid"):
         parse_official_law_corpus(bad, version)
 
@@ -169,6 +171,6 @@ def test_fetch_uses_official_api_without_leaking_secret(version):
 
 def test_missing_articles_or_oversized_xml_fail_closed(version):
     with pytest.raises(ValueError, match="no article"):
-        parse_official_law_corpus(XML.replace(b"조문단위", b"조문없음"), version)
+        parse_official_law_corpus(XML.replace("조문단위".encode("utf-8"), "조문없음".encode("utf-8")), version)
     with pytest.raises(ValueError, match="exceeds"):
         parse_official_law_corpus(b"x" * (4 * 1024 * 1024 + 1), version)
