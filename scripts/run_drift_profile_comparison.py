@@ -111,6 +111,12 @@ def main() -> None:
     )
     if min_community_term_overlap < 0:
         parser.error("GRAPHRAG_MIN_COMMUNITY_TERM_OVERLAP must be >= 0")
+    raw_strict_entity = os.getenv(
+        "GRAPHRAG_STRIP_UNVERIFIED_ENTITY_DESCRIPTIONS", "false"
+    ).strip().lower()
+    if raw_strict_entity not in {"true", "false", "1", "0"}:
+        parser.error("GRAPHRAG_STRIP_UNVERIFIED_ENTITY_DESCRIPTIONS must be true/false")
+    strict_entity_descriptions = raw_strict_entity in {"true", "1"}
     raw_allowed = os.getenv("GRAPHRAG_ALLOWED_COMMUNITY_IDS")
     allowed_community_ids = (
         None if raw_allowed is None
@@ -131,6 +137,7 @@ def main() -> None:
             "temperature": base_generator.temperature,
             "provider_max_inflight": args.provider_max_inflight,
             "min_community_term_overlap": min_community_term_overlap,
+            "strip_unverified_entity_descriptions": strict_entity_descriptions,
             "allowed_community_ids": (
                 None if allowed_community_ids is None
                 else list(allowed_community_ids)
@@ -147,6 +154,7 @@ def main() -> None:
         Neo4jSettings.from_env(),
         allowed_community_ids=allowed_community_ids,
         min_community_term_overlap=min_community_term_overlap,
+        strip_unverified_entity_descriptions=strict_entity_descriptions,
     )
     checkpoint_context = (
         open_sqlite_checkpointer(args.checkpoint_db)
@@ -263,6 +271,7 @@ def main() -> None:
         )
         result["benchmark_identity"] = identity
         result["community_source_filter"] = {
+            "strip_unverified_entity_descriptions": strict_entity_descriptions,
             "min_community_term_overlap": min_community_term_overlap,
             "status": (
                 "unrestricted" if allowed_community_ids is None
