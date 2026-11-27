@@ -1,0 +1,57 @@
+name: Verify official-law corpus on local Neo4j
+
+on:
+  pull_request:
+    paths:
+      - "src/graphrag_drift/official_law_corpus*.py"
+      - "src/graphrag_drift/verified_official_ingestion.py"
+      - "scripts/ingest_verified_official_law_corpus.py"
+      - "tests/test_official_law_corpus*.py"
+      - ".github/workflows/official-law-local-neo4j.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  disposable-neo4j:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      LOCAL_NEO4J_URI: bolt://127.0.0.1:17687
+      LOCAL_NEO4J_PASSWORD: local-test-password
+      OFFICIAL_LAW_LOCAL_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Start temporary localhost-only Neo4j
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name official-law-neo4j \
+            -p 127.0.0.1:17687:7687 \
+            -e NEO4J_AUTH=neo4j/local-test-password \
+            neo4j:5.26-community
+          ready=false
+          for i in $(seq 1 90); do
+            if docker exec official-law-neo4j cypher-shell \
+              -u neo4j -p local-test-password "RETURN 1" >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "true" ]; then
+            docker logs official-law-neo4j
+            exit 1
+          fi
+      - name: Verify real transaction rollback and direct article retrieval
+        run: pytest -q tests/test_official_law_corpus_neo4j_integration.py
+      - name: Cleanup temporary Neo4j
+        if: always()
+        run: docker rm -f official-law-neo4j || true
