@@ -217,3 +217,98 @@ def test_offline_provenance_enrichment_rejects_stale_input_context(tmp_path: Pat
     import pytest
     with pytest.raises(ValueError, match="Context hash mismatch"):
         enrich_cached_community_report_provenance(root)
+
+
+
+def _part_response() -> str:
+    return json.dumps({
+        "summary": "part summary",
+        "key_points": ["verified article"],
+        "entities": ["방사선안전관리자"],
+    }, ensure_ascii=False)
+
+
+def _final_response() -> str:
+    return json.dumps({
+        "title": "safety manager",
+        "summary": "verified source summary",
+        "key_findings": ["legal source is required"],
+        "entities": ["방사선안전관리자"],
+        "notes": "",
+    }, ensure_ascii=False)
+
+
+def test_part_checkpoint_reused_after_final_report_timeout(tmp_path: Path) -> None:
+    import pytest
+
+    root = _repo(tmp_path)
+    checkpoint_dir = root / ".community_report_checkpoints"
+    first = FakeGenerator([_part_response(), "invalid JSON from timed-out model"])
+    with pytest.raises(json.JSONDecodeError):
+        CommunityReportCacheBuilder(
+            generator=first,
+            generator_name="mock-model-v1",
+            checkpoint_root=checkpoint_dir,
+        ).build(root)
+    assert len(first.prompts) == 2
+    assert len(list(checkpoint_dir.rglob("part-*.json"))) == 1
+
+    resumed = FakeGenerator([_final_response()])
+    result = CommunityReportCacheBuilder(
+        generator=resumed,
+        generator_name="mock-model-v1",
+        checkpoint_root=checkpoint_dir,
+    ).build(root)
+    assert result["generated"] == 1
+    assert result["part_checkpoints_reused"] == 1
+    assert result["part_checkpoints_written"] == 0
+    assert len(resumed.prompts) == 1
+    assert "final GraphRAG Community Report" in resumed.prompts[0]
+
+
+def test_part_checkpoint_changes_when_source_context_changes(tmp_path: Path) -> None:
+    root = _repo(tmp_path)
+    checkpoint_dir = root / ".checkpoints"
+    first = FakeGenerator([_part_response(), _final_response()])
+    CommunityReportCacheBuilder(
+        first, generator_name="mock-model-v1", checkpoint_root=checkpoint_dir
+    ).build(root)
+
+    manifest_path = root / "community_report_inputs/manifest.json"
+    inputs = json.loads(manifest_path.read_text())
+    inputs["communities"][0]["context_sha256"] = "c" * 64
+    _write(manifest_path, inputs)
+    next_generator = FakeGenerator([_part_response(), _final_response()])
+    outcome = CommunityReportCacheBuilder(
+        next_generator,
+        generator_name="mock-model-v1",
+        checkpoint_root=checkpoint_dir,
+    ).build(root)
+    assert outcome["part_checkpoints_written"] == 1
+    assert outcome["part_checkpoints_reused"] == 0
+    assert len(next_generator.prompts) == 2
+    assert len(list(checkpoint_dir.rglob("part-*.json"))) == 2
+
+
+def test_tampered_part_checkpoint_fails_closed(tmp_path: Path) -> None:
+    import pytest
+
+    root = _repo(tmp_path)
+    checkpoint_dir = root / ".checkpoints"
+    generator = FakeGenerator([_part_response(), "invalid JSON"])
+    with pytest.raises(json.JSONDecodeError):
+        CommunityReportCacheBuilder(
+            generator, generator_name="mock-model-v1",
+            checkpoint_root=checkpoint_dir,
+        ).build(root)
+
+    path = next(checkpoint_dir.rglob("part-*.json"))
+    checkpoint = json.loads(path.read_text())
+    checkpoint["input_sha256"] = "0" * 64
+    _write(path, checkpoint)
+    with pytest.raises(ValueError, match="identity mismatch"):
+        CommunityReportCacheBuilder(
+            FakeGenerator([_final_response()]),
+            generator_name="mock-model-v1",
+            checkpoint_root=checkpoint_dir,
+        ).build(root)
